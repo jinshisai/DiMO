@@ -943,10 +943,6 @@ class DiMO(object):#, FitThinModel):
             # update parameters
             _model = model.copy() # to make sure parallel calculations go well
             _model.set_params(*params_full)
-            #model.set_params(*self.params_ini)
-            #print('p in model')
-            #print(_params_full)
-            #model.check_params()
 
             # renew grid
             if renew_grid:
