@@ -14,7 +14,7 @@ from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
 #from .linecube import tocube, solve_3LRT, waverage_to_cube, integrate_to_cube, solve_box3LRT
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
-from .libcube import spectra
+from .libcube import spectra, transfer
 
 
 ### constants
@@ -93,6 +93,9 @@ class MultiLayerDisk(object):
             self.mol = Molecule(line)
             self.mol.moldata[line].partition_grid(Tmin, Tmax, nTex, scale = 'linear')
             self.mmol = self.mol.moldata[line].weight
+            self.Qgrid = (self.mol.moldata[line]._Tgrid, self.mol.moldata[line]._PFgrid)
+            self.trans, self.freq, self.Aul, self.gu, self.gl, self.Eu, self.El = \
+            self.mol.moldata[line].params_trans(iline)
 
         # initialize parameters
         # dust layer
@@ -387,15 +390,17 @@ class MultiLayerDisk(object):
         '''
 
         # fore layer
-        n_gf[zout_f] = self.puff_up_layer(N_g[zout_f], z[zout_f], z0f[zout_f], h_out[zout_f])
-        n_gf[zin_f] = self.puff_up_layer(N_g[zin_f], z[zin_f], z0f[zin_f], h_in[zin_f])
+        n_gf[zout_f] = self.puff_up_layer(N_g[zout_f], z[zout_f], z0f[zout_f], h_out[zout_f]) / auTOcm # cm^-3
+        n_gf[zin_f] = self.puff_up_layer(N_g[zin_f], z[zin_f], z0f[zin_f], h_in[zin_f]) / auTOcm # cm^-3
 
         # rear layer
-        n_gr[zout_r] = self.puff_up_layer(N_g[zout_r], z[zout_r], z0r[zout_r], h_out[zout_r])
-        n_gr[zin_r] = self.puff_up_layer(N_g[zin_r], z[zin_r], z0r[zin_r], h_in[zin_r])
+        n_gr[zout_r] = self.puff_up_layer(N_g[zout_r], z[zout_r], z0r[zout_r], h_out[zout_r]) / auTOcm # cm^-3
+        n_gr[zin_r] = self.puff_up_layer(N_g[zin_r], z[zin_r], z0r[zin_r], h_in[zin_r]) / auTOcm # cm^-3
 
-        n_gf = n_gf.clip(1.e-30, None)
-        n_gr = n_gr.clip(1.e-30, None)
+        #n_gf = n_gf.clip(1.e-30, None)
+        #n_gr = n_gr.clip(1.e-30, None)
+        n_gf[n_gf <= 1.e-20] == 0.
+        n_gr[n_gr <= 1.e-20] == 0.
 
         # line width
         if dv_mode == 'thermal':
@@ -480,19 +485,29 @@ class MultiLayerDisk(object):
             #(0,3,2,1)) # np.transpose(Tt_cube, (0,1,3,2))
 
             # new version
-            lnprofs = spectra.glnprof_series(self.v, vlos.ravel(), dv.ravel()).reshape(self.nv, self.nx, self.ny, self.nz)
-            Tv_gf, Tv_gr, N_v_gf, N_v_gr = spectra.Tn_to_cube(T_g, n_gf, n_gr, lnprofs, self.grid.dz)
-            Tv_gf, Tv_gr, N_v_gf, N_v_gr = np.transpose(
-                np.array([Tv_gf, Tv_gr, N_v_gf, N_v_gr]),
+            lnprofs = spectra.glnprof_series(self.v, 
+                vlos.ravel(), dv.ravel()
+                ).reshape(self.nv, self.nx, self.ny, self.nz)
+            #Tv_gf, Tv_gr, N_v_gf, N_v_gr = spectra.Tn_to_cube(T_g, n_gf, n_gr, lnprofs, self.grid.dz)
+            #Tv_gf, Tv_gr, N_v_gf, N_v_gr = np.transpose(
+            #    np.array([Tv_gf, Tv_gr, N_v_gf, N_v_gr]),
+            #    (0,1,3,2,))
+
+            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnlnp_to_cube(
+                T_g, n_gf, n_gr, lnprofs, self.grid.dz * auTOcm,
+                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
+                np.array([Tv_gf, Tv_gr, tau_v_gf, tau_v_gr]),
                 (0,1,3,2,))
         else:
             Tv_gf, Tv_gr, N_v_gf, N_v_gr = np.transpose(
-            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz),
+            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm),
             (0,1,3,2,))
 
         Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
         Tv_gr = Tv_gr.clip(1., None)
 
+        '''
         # density to tau
         #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
         #print('N_v_gf max: %13.2e'%(np.nanmax(N_v_gf)))
@@ -506,6 +521,7 @@ class MultiLayerDisk(object):
             tau_v_gf = N_v_gf
             tau_v_gr = N_v_gr
         #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
+        '''
 
         if return_Ttau:
             return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
