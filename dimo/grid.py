@@ -2,6 +2,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+from numba import jit, njit, prange
 
 
 class Nested2DGrid(object):

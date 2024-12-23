@@ -14,7 +14,7 @@ from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
 #from .linecube import tocube, solve_3LRT, waverage_to_cube, integrate_to_cube, solve_box3LRT
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
-from .libcube import spectra, transfer
+from .libcube import spectra, transfer, linecube
 
 
 ### constants
@@ -428,7 +428,8 @@ class MultiLayerDisk(object):
         return T, tau
 
 
-    def build(self, rin = 0.1, dv_mode = 'total'):
+    def build(self, rin = 0.1, dv_mode = 'total',
+        collapse = False):
         # for each nested level
         T_g = [None] * self.grid.nlevels
         T_d = [None] * self.grid.nlevels
@@ -457,15 +458,15 @@ class MultiLayerDisk(object):
             tau_d[l] = _tau_d
             dv[l] = _dv
 
-        T_g = self.grid.collapse(T_g)
-        vlos = self.grid.collapse(vlos)
-        n_gf = self.grid.collapse(n_gf)
-        n_gr = self.grid.collapse(n_gr)
-        T_d = self.grid2D.collapse(T_d)
-        tau_d = self.grid2D.collapse(tau_d)
-
-        if (self.dv > 0.) | (dv_mode == 'thermal'):
-            dv = self.grid.collapse(dv)
+        if collapse:
+            T_g = self.grid.collapse(T_g)
+            vlos = self.grid.collapse(vlos)
+            n_gf = self.grid.collapse(n_gf)
+            n_gr = self.grid.collapse(n_gr)
+            T_d = self.grid2D.collapse(T_d)
+            tau_d = self.grid2D.collapse(tau_d)
+            if (self.dv > 0.) | (dv_mode == 'thermal'):
+                dv = self.grid.collapse(dv)
 
         return T_g, vlos, n_gf, n_gr, T_d, tau_d, dv
 
@@ -475,53 +476,106 @@ class MultiLayerDisk(object):
         return_Ttau = False):
         T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(dv_mode = dv_mode)
 
+        # dust
+        T_d = self.grid2D.collapse(T_d)
+        tau_d = self.grid2D.collapse(tau_d)
+
         # To cube
         #  calculate column density and density-weighted temperature 
         #  of each gas layer at every velocity channel.
         if (self.dv > 0.) | (dv_mode == 'thermal'):
-            # old version
-            #Tv_gf, Tv_gr, N_v_gf, N_v_gr = np.transpose(
-            #Tndv_to_cube(T_g, n_gf, n_gr, vlos, dv, self.ve, self.grid.dz),
-            #(0,3,2,1)) # np.transpose(Tt_cube, (0,1,3,2))
+            _Tv_g = [[] for _ in range(self.nv)]  # x,y,z,v
+            _nv_gf = [[] for _ in range(self.nv)]
+            _nv_gr = [[] for _ in range(self.nv)]
+            for l in range(self.grid.nlevels):
+                nx, ny, nz = self.grid.ngrids[l]
 
-            # new version
-            lnprofs = spectra.glnprof_series(self.v, 
-                vlos.ravel(), dv.ravel()
-                ).reshape(self.nv, self.nx, self.ny, self.nz)
-            #Tv_gf, Tv_gr, N_v_gf, N_v_gr = spectra.Tn_to_cube(T_g, n_gf, n_gr, lnprofs, self.grid.dz)
-            #Tv_gf, Tv_gr, N_v_gf, N_v_gr = np.transpose(
-            #    np.array([Tv_gf, Tv_gr, N_v_gf, N_v_gr]),
-            #    (0,1,3,2,))
+                _vlos = vlos[l]
+                _dv = dv[l]
+                # new version
+                lnprofs = spectra.glnprof_series(self.v, _vlos, _dv)
 
-            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnlnp_to_cube(
-                T_g, n_gf, n_gr, lnprofs, self.grid.dz * auTOcm,
-                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+                #start = time.time()
+                n_cube = linecube.to_xyzv(
+                    np.array([n_gf[l], n_gr[l]]), lnprofs)
+                #end = time.time()
+                #print('to_xyzv takes %.2f'%(end-start))
+
+                #start = time.time()
+                #print('appending... at level %i'%l)
+                for i in range(self.nv):
+                    _Tv_g[i].append(T_g[l])
+                    _nv_gf[i].append(n_cube[0,i,:])
+                    _nv_gr[i].append(n_cube[1,i,:])
+                #end = time.time()
+                #print('takes %.2f'%(end-start))
+
+            Nv_gf = np.zeros((self.nv, self.nx, self.ny))
+            Tv_gf = np.zeros((self.nv, self.nx, self.ny))
+            Nv_gr = np.zeros((self.nv, self.nx, self.ny))
+            Tv_gr = np.zeros((self.nv, self.nx, self.ny))
+            for i in range(self.nv):
+                Tv_g = self.grid.collapse(_Tv_g[i])
+                nv_gf = self.grid.collapse(_nv_gf[i])
+                nv_gr = self.grid.collapse(_nv_gr[i])
+
+                # fore side
+                _Nv_gf = np.nansum(nv_gf * self.grid.dz * auTOcm, axis = 2)
+                #print('max Nv_gf: %.3e'%(np.nanmax(_Nv_gf)))
+                Nv_gf[i,:,:] = _Nv_gf
+                where_nonzero = _Nv_gf > 0.
+                Tv_gf[i,:,:][where_nonzero] = np.nansum(
+                    Tv_g * nv_gf * self.grid.dz * auTOcm, axis = 2
+                    )[where_nonzero] / _Nv_gf[where_nonzero]
+                # rear side
+                _Nv_gr = np.nansum(nv_gr * self.grid.dz * auTOcm, axis = 2)
+                Nv_gr[i,:,:] = _Nv_gr
+                where_nonzero = _Nv_gr > 0.
+                Tv_gr[i,:,:][where_nonzero] = np.nansum(
+                    Tv_g * nv_gr * self.grid.dz * auTOcm, axis = 2
+                    )[where_nonzero] / _Nv_gr[where_nonzero]
+
+            Nv_gf = np.transpose(Nv_gf, (0,2,1)) # v, y, x
+            Tv_gf = np.transpose(Tv_gf, (0,2,1)) # v, y, x
+            Nv_gr = np.transpose(Nv_gr, (0,2,1)) # v, y, x
+            Tv_gr = np.transpose(Tv_gr, (0,2,1)) # v, y, x
+
+            #print(self.grid.ngrids)
+            '''
             Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
-                np.array([Tv_gf, Tv_gr, tau_v_gf, tau_v_gr]),
-                (0,1,3,2,))
+                transfer.nested_Tnv_to_cube(
+                    (self.grid.nlevels, 
+                        self.grid.ngrids, self.grid.nsub, 
+                        self.grid.xinest, self.grid.yinest, self.grid.zinest),
+                    _Tv_g, _nv_gf, _nv_gr, 
+                    self.nx, self.ny, self.nz, self.nv,
+                    self.grid.dz * auTOcm,
+                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid
+                    ),
+                (0,1,3,2))
+            '''
         else:
-            Tv_gf, Tv_gr, N_v_gf, N_v_gr = np.transpose(
-            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm),
+            Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
+            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
             (0,1,3,2,))
 
         Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
         Tv_gr = Tv_gr.clip(1., None)
 
-        '''
         # density to tau
         #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
-        #print('N_v_gf max: %13.2e'%(np.nanmax(N_v_gf)))
+        #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
         if (self.line is not None) * (self.iline is not None):
             tau_v_gf = self.mol.get_tau(self.line, self.iline, 
-                N_v_gf, Tv_gf, delv = None, grid_approx = True)
+                Nv_gf, Tv_gf, delv = None, grid_approx = True)
             tau_v_gr = self.mol.get_tau(self.line, self.iline, 
-                N_v_gr, Tv_gr, delv = None, grid_approx = True)
+                Nv_gr, Tv_gr, delv = None, grid_approx = True)
         else:
             # ignore temperature effect on conversion from column density to tau
             tau_v_gf = N_v_gf
             tau_v_gr = N_v_gr
         #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
-        '''
+
 
         if return_Ttau:
             return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])

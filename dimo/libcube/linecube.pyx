@@ -62,6 +62,38 @@ cpdef cnp.ndarray[DTYPE_t, ndim=4] Tt_to_cube(
 
 
 
+# xyz temperature and density to xyzv
+# For nested grid
+@cython.boundscheck(False) # turn off bounds-checking for entire function
+@cython.wraparound(False)  # turn off negative index wrapping for entire function
+cpdef cnp.ndarray[DTYPE_t, ndim=3] to_xyzv(
+    cnp.ndarray[DTYPE_t, ndim=2] data,
+    cnp.ndarray[DTYPE_t, ndim=2] lnprof,
+    ):
+    '''
+    Convert flattend cubic data into xyzv 4D data with given line profiles.
+
+    Parameters
+    ----------
+     data (2D array): flattend cubic data. Must be in shape of (nq, nd), where
+      nq is number of quantities and nd is number of data that is nx * ny * nz.
+     lnprof (2D array): Line profile for each cell. Must be in shape of (nv, nd),
+      where nv is number of velocity cells and nd is number of data.
+    '''
+    cdef int nv = lnprof.shape[0]
+    cdef int nd = lnprof.shape[1]
+    cdef int nq = data.shape[0]
+    cdef cnp.ndarray[DTYPE_t, ndim=3] xyzv = np.zeros((nq, nv, nd))
+    cdef int i, j, k
+
+    for i in range(nq):
+        for j in range(nv):
+            for k in range(nd):
+                xyzv[i,j,k] = data[i,k] * lnprof[j,k]
+
+    return xyzv
+
+
 # temperature, density and linewidth to cube
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
