@@ -15,6 +15,7 @@ from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
+from .fast_grid import fast_3d_collapse
 
 
 ### constants
@@ -339,7 +340,7 @@ class MultiLayerDisk(object):
 
         # temperature and tau
         T_g, N_g = self.get_Tt(R, self.Tg0, self.qg,
-            10.**self.log_N_gc, self.rc_g, self.gamma_g,)
+            10.**self.log_N_gc, self.rc_g, self.gamma_g, rin = rin)
 
         # puff up layers
         # layer height
@@ -424,7 +425,7 @@ class MultiLayerDisk(object):
 
     def build_dust_layer(self, R, rin = 0.1):
         T, tau = self.get_Tt(R, self.Td0, self.qd, 
-            10.**self.log_tau_dc, self.rc_d, self.gamma_d)
+            10.**self.log_tau_dc, self.rc_d, self.gamma_d, rin = rin)
         return T, tau
 
 
@@ -447,8 +448,8 @@ class MultiLayerDisk(object):
             # get temperature and volume tau
             _T_g, _vlos, _n_gf, _n_gr, _dv = \
             self.build_gas_layer(self.Rs[l].copy(), 
-                self.ts[l].copy(), self.zps[l].copy(), dv_mode = dv_mode)
-            _T_d, _tau_d = self.build_dust_layer(self.Rmid[l].copy())
+                self.ts[l].copy(), self.zps[l].copy(), rin = rin, dv_mode = dv_mode)
+            _T_d, _tau_d = self.build_dust_layer(self.Rmid[l].copy(), rin = rin)
             _vlos += self.vsys
             T_g[l] = _T_g
             vlos[l] = _vlos
@@ -473,8 +474,8 @@ class MultiLayerDisk(object):
 
     def build_cube(self, Tcmb = 2.73, f0 = 230., 
         dist = 140., dv_mode = 'total', contsub = True,
-        return_Ttau = False):
-        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(dv_mode = dv_mode)
+        return_Ttau = False, rin = 0.1):
+        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(rin = rin, dv_mode = dv_mode)
 
         # dust
         T_d = self.grid2D.collapse(T_d)
@@ -487,6 +488,8 @@ class MultiLayerDisk(object):
             _Tv_g = [[] for _ in range(self.nv)]  # x,y,z,v
             _nv_gf = [[] for _ in range(self.nv)]
             _nv_gr = [[] for _ in range(self.nv)]
+
+            #start = time.time()
             for l in range(self.grid.nlevels):
                 nx, ny, nz = self.grid.ngrids[l]
 
@@ -509,6 +512,8 @@ class MultiLayerDisk(object):
                     _nv_gr[i].append(n_cube[1,i,:])
                 #end = time.time()
                 #print('takes %.2f'%(end-start))
+            #end = time.time()
+            #print('takes %.2f'%(end-start))
 
             Nv_gf = np.zeros((self.nv, self.nx, self.ny))
             Tv_gf = np.zeros((self.nv, self.nx, self.ny))
@@ -539,9 +544,16 @@ class MultiLayerDisk(object):
             Tv_gf = np.transpose(Tv_gf, (0,2,1)) # v, y, x
             Nv_gr = np.transpose(Nv_gr, (0,2,1)) # v, y, x
             Tv_gr = np.transpose(Tv_gr, (0,2,1)) # v, y, x
-
-            #print(self.grid.ngrids)
             '''
+            #print(self.grid.ngrids)
+
+            Tv_gf = np.zeros((self.nv, self.nx, self.ny))
+            print(self.grid.ngrids)
+            for i in range(1):
+                Tv_g = fast_3d_collapse(_Tv_g[i], self.grid.nlevels, 
+                        self.grid.ngrids, self.grid.nsub, 
+                        self.grid.xinest, self.grid.yinest, self.grid.zinest)
+
             Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
                 transfer.nested_Tnv_to_cube(
                     (self.grid.nlevels, 
@@ -562,6 +574,7 @@ class MultiLayerDisk(object):
         Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
         Tv_gr = Tv_gr.clip(1., None)
 
+
         # density to tau
         #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
         #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
@@ -572,8 +585,8 @@ class MultiLayerDisk(object):
                 Nv_gr, Tv_gr, delv = None, grid_approx = True)
         else:
             # ignore temperature effect on conversion from column density to tau
-            tau_v_gf = N_v_gf
-            tau_v_gr = N_v_gr
+            tau_v_gf = Nv_gf
+            tau_v_gr = Nv_gr
         #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
 
 

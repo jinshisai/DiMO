@@ -1,9 +1,9 @@
 import numpy as np
-from numba import jit, njit, prange
+from numba import jit, njit, prange, typed
 
 
-@njit(parallel=True) # fastmath=True
-def fast_3d_collapse(d, nlevels,
+@njit#(parallel=True) # fastmath=True
+def fast_3d_collapse(d_in, nlevels,
     ngrids, nsub, xinest, yinest, zinest,
     upto = None):
     '''
@@ -13,24 +13,40 @@ def fast_3d_collapse(d, nlevels,
     ----------
     d (list): List of data on the nested grid
     '''
+
+    # Use Numba array
+    d = typed.List()
+    for _di in d_in:
+        d.append(_di)
+
     d_col = d[-1].reshape(ngrids[-1]) # starting from the inner most grid
     lmax = 0 if upto is None else upto
-    for l in prange(nlevels-1,lmax,-1):
+    for _l in prange(nlevels - lmax - 2):
+        l = nlevels - 1 - _l # count down
+
         nsub_l = nsub[l-1]
-        ximin, ximax = xinest[l]
-        yimin, yimax = yinest[l]
-        zimin, zimax = zinest[l]
+        ximin = xinest[l][0]
+        ximax = xinest[l][1]
+        yimin = yinest[l][0]
+        yimax = yinest[l][1]
+        zimin = zinest[l][0]
+        zimax = zinest[l][1]
         # collapse data on the inner grid
-        _d = fast_binning_3d(d_col, nsub_l) # .reshape(ngrids[l])
-        #print(ximin, ximax, yimin, yimax, zimin, zimax)
+        _d = fast_binning_3d(d_col, nsub_l)
 
         # go next layer
-        nx, ny, nz = ngrids[l-1] # size of the upper layer
+        nx = ngrids[l-1][0] # size of the upper layer
+        ny = ngrids[l-1][1]
+        nz = ngrids[l-1][2]
         d_col = np.zeros((nx, ny, nz), dtype=np.float64) # np.full((nx, ny, nz), np.nan)
+        #print('Upper layer', d_col.shape)
+        #print('Insert', d_col[ximin:ximax+1, yimin:yimax+1, zimin:zimax+1].shape)
 
         # insert collapsed data
-        d_col[ximin:ximax+1, yimin:yimax+1, zimin:zimax+1] = _d
+        #d_col[ximin:ximax+1, yimin:yimax+1, zimin:zimax+1] = _d
+        d_col = array_substitute(d_col, _d, ximin, ximax, yimin, yimax, zimin, zimax)
 
+        '''
         # fill upper layer data
         # Region 1: x from zero to ximin, all y and z
         d_col[:ximin, :, :] = \
@@ -68,14 +84,26 @@ def fast_3d_collapse(d, nlevels,
 
         #print(l)
         #print(np.nonzero(np.isnan(d_col)))
+        '''
 
     return d_col
+
+
+
+@njit(parallel = True)
+def array_substitute(a1, a2, ximin, ximax, yimin, yimax, zimin, zimax):
+    for i in prange(ximax + 1 - ximin):
+        for j in range(yimax + 1 - yimin):
+            for k in range(zimax + 1 - zimin):
+                #print(a1[ximin + i, yimin + j, zimin + k], a2[i, j, k])
+                a1[ximin + i, yimin + j, zimin + k] = a2[i, j, k]
+    return a1
 
 
 @njit(parallel=True) # fastmath=True
 def fast_binning_3d(data, nbin):
     nx, ny, nz = data.shape
-    d_avg = np.zeros((nx // nbin, ny // nbin, nz // nbin))
+    d_avg = np.zeros((nx // nbin, ny // nbin, nz // nbin), dtype = np.float64)
 
     for i in prange(nbin):
         d_avg += data[i::nbin, i::nbin, i::nbin]

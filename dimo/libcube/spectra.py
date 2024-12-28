@@ -76,3 +76,52 @@ def Tn_to_cube(Tg, n_gf, n_gr, lnprof_series, dz):
                     Tv_gr[i,j,k] = _Tv_gr * dz / _Nv_gr
 
     return Tv_gf, Tv_gr, Nv_gf, Nv_gr
+
+
+
+@njit(parallel=True)
+def to_xyzv_nested(
+    ngrids,
+    vlos,
+    dv,
+    v
+    ):
+    '''
+    Convert flattend cubic data into xyzv 4D data with given line profiles.
+
+    Parameters
+    ----------
+     data (2D array): flattend cubic data. Must be in shape of (nq, nd), where
+      nq is number of quantities and nd is number of data that is nx * ny * nz.
+     lnprof (2D array): Line profile for each cell. Must be in shape of (nv, nd),
+      where nv is number of velocity cells and nd is number of data.
+    '''
+    nl = len(ngrids)
+
+    for l in prange(nl):
+        nx, ny, nz = ngrids[l]
+
+        _vlos = vlos[l]
+        _dv = dv[l]
+        # new version
+        lnprofs = spectra.glnprof_series(self.v, _vlos, _dv)
+
+        #start = time.time()
+        n_cube = linecube.to_xyzv(
+            np.array([n_gf[l], n_gr[l]]), lnprofs)
+        #end = time.time()
+        #print('to_xyzv takes %.2f'%(end-start))
+
+        #start = time.time()
+        #print('appending... at level %i'%l)
+        for i in range(self.nv):
+            _Tv_g[i].append(T_g[l])
+            _nv_gf[i].append(n_cube[0,i,:])
+            _nv_gr[i].append(n_cube[1,i,:])
+
+    for i in range(nq):
+        for j in range(nv):
+            for k in range(nd):
+                xyzv[i,j,k] = data[i,k] * lnprof[j,k]
+
+    return xyzv

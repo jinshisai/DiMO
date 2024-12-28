@@ -2,7 +2,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
-from numba import jit, njit, prange
 
 
 class Nested2DGrid(object):
@@ -358,6 +357,9 @@ class Nested3DGrid(object):
         self.xinest = [[None, None]] * (nlevels + 1)
         self.yinest = [[None, None]] * (nlevels + 1)
         self.zinest = [[None, None]] * (nlevels + 1)
+        self.xinest[0] = [-1,-1]
+        self.yinest[0] = [-1,-1]
+        self.zinest[0] = [-1,-1]
         # nest
         if self.nlevels > 1:
             if (np.array([xlim, ylim, zlim]) == None).any():
