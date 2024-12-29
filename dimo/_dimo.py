@@ -577,7 +577,7 @@ class DiMO(object):#, FitThinModel):
         beam = None, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
         n_nest = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
-        xscale = 0.5, yscale = 0.5, zscale = 0.5):
+        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1.):
 
         # parameter checks
         try:
@@ -614,6 +614,7 @@ class DiMO(object):#, FitThinModel):
         self.xscale, self.yscale = xscale, yscale
         self.line = line
         self.iline = iline
+        self.rin = rin
 
 
     def fit_cube(self, params: dict, pranges:list, 
@@ -950,7 +951,8 @@ class DiMO(object):#, FitThinModel):
 
             # cube on the original grid
             modelcube = _model.build_cube(
-                Tcmb = Tcmb, f0 = f0, dist = self.dist, dv_mode = dv_mode)
+                Tcmb = Tcmb, f0 = f0, dist = self.dist, 
+                dv_mode = dv_mode, rin = self.rin)
 
             # debug
             #print('Iv,max out: %13.2e'%(np.nanmax(modelcube)))
