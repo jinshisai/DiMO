@@ -577,7 +577,7 @@ class DiMO(object):#, FitThinModel):
         beam = None, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
         n_nest = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
-        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1.):
+        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10.):
 
         # parameter checks
         try:
@@ -615,6 +615,7 @@ class DiMO(object):#, FitThinModel):
         self.line = line
         self.iline = iline
         self.rin = rin
+        self.reslim = reslim
 
 
     def fit_cube(self, params: dict, pranges:list, 
@@ -854,7 +855,7 @@ class DiMO(object):#, FitThinModel):
         outname = 'modelfitter_results', nwalkers=None, 
         nrun=2000, nburn=1000, labels=[], show_progress=True, 
         optimize_ini=False, moves = emcee.moves.StretchMove(), 
-        symmetric_error=False, npool = 1, f_rand_init = 1., reslim = 10.,
+        symmetric_error=False, npool = 1, f_rand_init = 1.,
         show_results = True):
         axes = [x, y, z, v]
         # drop unecessary axis
@@ -904,7 +905,7 @@ class DiMO(object):#, FitThinModel):
         # setup model
         model = self.model(x, y, z, v,
             xlim = None, ylim = None, zlim = None,
-            nsub = self.n_nest, reslim = reslim,
+            nsub = self.n_nest, reslim = self.reslim,
             line = self.line, iline = self.iline,
             adoptive_zaxis = True, cosi_lim = 0.5, beam = self.beam,)
         model.grid.gridinfo()
