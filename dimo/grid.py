@@ -27,34 +27,32 @@ class Nested2DGrid(object):
 
         # nested grid
         self.nsub = nsub
-        nlevels = 0 if nsub is None else len(nsub)
-        self.nlevels = nlevels + 1
+        nlevels = 1 if nsub is None else len(nsub) + 1
+        self.nlevels = nlevels
         # original 1D axes
-        self.xaxes = [None] * (nlevels + 1)
-        self.yaxes = [None] * (nlevels + 1)
+        self.xaxes = [None] * nlevels
+        self.yaxes = [None] * nlevels
         self.xaxes[0], self.yaxes[0] = x, y
         # grid sizes
-        self.ngrids = [(None, None)] * (nlevels + 1)
-        self.ngrids[0] = (ny, nx)
+        self.ngrids = np.zeros((nlevels, 2)).astype(int)
+        self.ngrids[0,:] = np.array([ny, nx])
         # nested grid
-        self.xnest = [None] * (nlevels + 1)
-        self.ynest = [None] * (nlevels + 1)
-        self.xnest[0] = self.xx.ravel()
-        self.ynest[0] = self.yy.ravel()
+        self.xnest = self.xx.ravel()
+        self.ynest = self.yy.ravel()
+        self.partition = self.xnest.size
         # starting and ending indices
-        self.xinest = [[None, None]] * (nlevels + 1)
-        self.yinest = [[None, None]] * (nlevels + 1)
+        self.xinest = [-1,-1]
+        self.yinest = [-1,-1]
         # nest
         if self.nlevels > 1:
             if (np.array([xlim, ylim]) == None).any():
                 _xlim, _ylim = self.get_nestinglim(reslim = reslim)
                 if xlim is None: xlim = _xlim
                 if ylim is None: ylim = _ylim
-            for l in range(nlevels):
-                self.nest(l+1, xlim[l], ylim[l], nsub[l])
             self.xlim, self.ylim = xlim.copy(), ylim.copy()
             self.xlim.insert(0, [xe[0], xe[-1]])
             self.ylim.insert(0, [ye[0], ye[-1]])
+            self.nest()
         else:
             self.xlim = [xe[0], xe[-1]]
             self.ylim = [ye[0], ye[-1]]
@@ -114,45 +112,58 @@ class Nested2DGrid(object):
         return xx, yy
 
 
-    def nest(self, l, xlim, ylim, nsub):
+    def nest(self):
         '''
         l - 1 is the mother grid layer. l is the child grid layer.
         '''
-        x, y = self.xaxes[l-1], self.yaxes[l-1]
-        ximin, ximax, yimin, yimax, x_sub, y_sub = \
-        nestgrid_2D(x, y, xlim, ylim, nsub)
-        self.xinest[l] = [ximin, ximax] # starting and ending indices on the upper-layer grid
-        self.yinest[l] = [yimin, yimax]
-        self.xaxes[l], self.yaxes[l] = x_sub, y_sub
+        # initialize
+        partition = [0]
+        xnest = np.array([])
+        ynest = np.array([])
+        for l in range(1, self.nlevels):
+            # axes of the parental grid
+            x, y = self.xaxes[l-1], self.yaxes[l-1]
 
-        # upper grid
-        _ny, _nx = self.ngrids[l-1]
-        if self.xnest[l-1].size == _nx * _ny:
-            xx = self.xnest[l-1].reshape(_ny, _nx)
-            yy = self.ynest[l-1].reshape(_ny, _nx)
-        else:
-            xx, yy = np.meshgrid(x, y)
-        # devide the upper grid into six sub-regions
-        # Region 1:  x from 0 to ximin, all y
-        R1x = xx[:, :ximin].ravel()
-        R1y = yy[:, :ximin].ravel()
-        # Region 2: x from ximax+1 to nx, all y and z
-        R2x = xx[:, ximax+1:].ravel()
-        R2y = yy[:, ximax+1:].ravel()
-        # Region 3: x from xi0 to ximax, y from 0 to yimin
-        R3x = xx[:yimin, ximin:ximax+1].ravel()
-        R3y = yy[:yimin, ximin:ximax+1].ravel()
-        # Region 4: x from xi0 to ximax, y from yimax+1 to ny, and all z
-        R4x = xx[yimax+1:, ximin:ximax+1].ravel()
-        R4y = yy[yimax+1:, ximin:ximax+1].ravel()
-        self.xnest[l-1] = np.concatenate([R1x, R2x, R3x, R4x]) # update
-        self.ynest[l-1] = np.concatenate([R1y, R2y, R3y, R4y]) # update
+            # make childe grid
+            ximin, ximax, yimin, yimax, x_sub, y_sub = \
+            nestgrid_2D(x, y, self.xlim[l], self.ylim[l], self.nsub[l-1])
+            self.xinest += [ximin, ximax] # starting and ending indices on the upper-layer grid
+            self.yinest += [yimin, yimax]
+            self.xaxes[l], self.yaxes[l] = x_sub, y_sub
+            self.ngrids[l,:] = np.array([len(x_sub), len(y_sub)])
+
+            # parental grid
+            _nx, _ny = self.ngrids[l-1,:]
+            #else:
+            xx, yy = np.meshgrid(x, y, indexing = 'ij')
+
+            # devide the upper grid into six sub-regions
+            # Region 1:  x from 0 to ximin, all y
+            R1x = xx[:, :ximin].ravel()
+            R1y = yy[:, :ximin].ravel()
+            # Region 2: x from ximax+1 to nx, all y and z
+            R2x = xx[:, ximax+1:].ravel()
+            R2y = yy[:, ximax+1:].ravel()
+            # Region 3: x from xi0 to ximax, y from 0 to yimin
+            R3x = xx[:yimin, ximin:ximax+1].ravel()
+            R3y = yy[:yimin, ximin:ximax+1].ravel()
+            # Region 4: x from xi0 to ximax, y from yimax+1 to ny, and all z
+            R4x = xx[yimax+1:, ximin:ximax+1].ravel()
+            R4y = yy[yimax+1:, ximin:ximax+1].ravel()
+
+            # update
+            Rx = np.concatenate([R1x, R2x, R3x, R4x])
+            partition.append(partition[l-1] + Rx.size)
+            xnest = np.concatenate([xnest, Rx]) # update
+            ynest = np.concatenate([ynest, R1y, R2y, R3y, R4y]) # update
 
         # child grid
         xx_sub, yy_sub = np.meshgrid(x_sub, y_sub)
-        self.xnest[l] = xx_sub.ravel()
-        self.ynest[l] = yy_sub.ravel()
-        self.ngrids[l] = (len(y_sub), len(x_sub))
+        xnest = np.concatenate([xnest, xx_sub.ravel()]) # update
+        ynest = np.concatenate([ynest, yy_sub.ravel()]) # update
+        self.xnest = xnest
+        self.ynest = ynest
+        self.partition = partition
 
 
     def collapse(self, d, upto = None):
@@ -163,48 +174,48 @@ class Nested2DGrid(object):
         ----------
         d (list): List of data on the nested grid
         '''
-        d_col = d[-1] # starting from the inner most grid
         lmax = 0 if upto is None else upto
+        d_col = d[self.partition[-1]:] # starting from the inner most grid
+        d_col = d_col.reshape(tuple(self.ngrids[-1,:]))
         for l in range(self.nlevels-1,lmax,-1):
             nsub = self.nsub[l-1]
-            ximin, ximax = self.xinest[l]
-            yimin, yimax = self.yinest[l]
+            ximin, ximax = self.xinest[l*2:(l+1)*2]
+            yimin, yimax = self.yinest[l*2:(l+1)*2]
             # collapse data on the inner grid
-            _d = self.binning_onsubgrid_layered(d_col.reshape(self.ngrids[l]), nsub)
+            _d = self.binning_onsubgrid_layered(d_col, nsub)
             #print(ximin, ximax, yimin, yimax, zimin, zimax)
 
-            # go next layer
-            ny, nx = self.ngrids[l-1] # size of the upper layer
-            d_col = np.empty((ny, nx))
-            d_col = np.full((ny, nx), np.nan)
+            # go upper layer
+            nx, ny = self.ngrids[l-1,:] # size of the upper layer
+            d_col = np.full((nx, ny), np.nan)
 
             # insert collapsed data
-            d_col[yimin:yimax+1, ximin:ximax+1] = _d
+            d_col[ximin:ximax+1, yimin:yimax+1] = _d
 
             # fill upper layer data
+            d_up = d[self.partition[l-1]:self.partition[l]]
+
             # Region 1: x from zero to ximin, all y and z
             d_col[:, :ximin] = \
-            d[l-1][:ximin * ny].reshape((ny, ximin))
+            d_up[:ximin * ny].reshape((ny, ximin))
             # Region 2: x from ximax to nx, all y and z
             i0 = ximin * ny
             i1 = i0 + (nx - ximax - 1) * ny
             d_col[:, ximax+1:] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (ny, nx - ximax - 1))
             # Region 3
             i0 = i1
             i1 = i0 + (ximax + 1 - ximin) * yimin
             d_col[:yimin, ximin:ximax+1] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (yimin, ximax + 1 - ximin))
             # Region 4
             i0 = i1
             i1 = i0 + (ximax + 1 - ximin) * (ny - yimax - 1)
             d_col[yimax+1:, ximin:ximax+1] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (ny - yimax - 1, ximax + 1 - ximin))
-            #print(l)
-            #print(np.nonzero(np.isnan(d_col)))
 
         return d_col
 
@@ -336,30 +347,25 @@ class Nested3DGrid(object):
 
         # nested grid
         self.nsub = nsub
-        nlevels = 0 if nsub is None else len(nsub)
-        self.nlevels = nlevels + 1
+        nlevels = 1 if nsub is None else len(nsub) + 1
+        self.nlevels = nlevels
         # original 1D axes
-        self.xaxes = [None] * (nlevels + 1)
-        self.yaxes = [None] * (nlevels + 1)
-        self.zaxes = [None] * (nlevels + 1)
+        self.xaxes = [None] * nlevels
+        self.yaxes = [None] * nlevels
+        self.zaxes = [None] * nlevels
         self.xaxes[0], self.yaxes[0], self.zaxes[0] = x, y, z
         # grid sizes
-        self.ngrids = [(None, None, None)] * (nlevels + 1)
-        self.ngrids[0] = (nx, ny, nz)
+        self.ngrids = np.zeros((nlevels, 3)).astype(int)
+        self.ngrids[0,:] = np.array([nx, ny, nz])
         # nested grid
-        self.xnest = [None] * (nlevels + 1)
-        self.ynest = [None] * (nlevels + 1)
-        self.znest = [None] * (nlevels + 1)
-        self.xnest[0] = self.xx.ravel()
-        self.ynest[0] = self.yy.ravel()
-        self.znest[0] = self.zz.ravel()
+        self.xnest = self.xx.ravel() # save all grid info in 1D array
+        self.ynest = self.yy.ravel()
+        self.znest = self.zz.ravel()
+        self.partition = [0, self.xnest.size] # partition indices
         # starting and ending indices
-        self.xinest = [[None, None]] * (nlevels + 1)
-        self.yinest = [[None, None]] * (nlevels + 1)
-        self.zinest = [[None, None]] * (nlevels + 1)
-        self.xinest[0] = [-1,-1]
-        self.yinest[0] = [-1,-1]
-        self.zinest[0] = [-1,-1]
+        self.xinest = [-1,-1]
+        self.yinest = [-1,-1]
+        self.zinest = [-1,-1]
         # nest
         if self.nlevels > 1:
             if (np.array([xlim, ylim, zlim]) == None).any():
@@ -367,12 +373,12 @@ class Nested3DGrid(object):
                 if xlim is None: xlim = _xlim
                 if ylim is None: ylim = _ylim
                 if zlim is None: zlim = _zlim
-            for l in range(nlevels):
-                self.nest(l+1, xlim[l], ylim[l], zlim[l], nsub[l])
             self.xlim, self.ylim, self.zlim = xlim.copy(), ylim.copy(), zlim.copy()
             self.xlim.insert(0, [xe[0], xe[-1]])
             self.ylim.insert(0, [ye[0], ye[-1]])
             self.zlim.insert(0, [ze[0], ze[-1]])
+
+            self.nest()
         else:
             self.xlim = [xe[0], xe[-1]]
             self.ylim = [ye[0], ye[-1]]
@@ -397,12 +403,13 @@ class Nested3DGrid(object):
         '''
         Get grid on the l layer.
         '''
-        _nx, _ny, _nz = self.ngrids[l]
+        _nx, _ny, _nz = self.ngrids[l,:]
+        partition = self.partition[l:l+2]
         # if it is not collapsed
-        if self.xnest[l].size == _nx * _ny * _nz:
-            xx = self.xnest[l].reshape(_nx, _ny, _nz)
-            yy = self.ynest[l].reshape(_nx, _ny, _nz)
-            zz = self.znest[l].reshape(_nx, _ny, _nz)
+        if self.xnest[partition[0]:partition[1]].size == _nx * _ny * _nz:
+            xx = self.xnest[partition[0]:partition[1]].reshape(_nx, _ny, _nz)
+            yy = self.ynest[partition[0]:partition[1]].reshape(_nx, _ny, _nz)
+            zz = self.znest[partition[0]:partition[1]].reshape(_nx, _ny, _nz)
         else:
             # else
             x, y, z = self.xaxes[l], self.yaxes[l], self.zaxes[l]
@@ -410,61 +417,79 @@ class Nested3DGrid(object):
         return xx, yy, zz
 
 
-    def nest(self, l, xlim, ylim, zlim, nsub):
+    def nest(self,):
         '''
         l - 1 is the mother grid layer. l is the child grid layer.
         '''
-        x, y, z = self.xaxes[l-1], self.yaxes[l-1], self.zaxes[l-1]
-        ximin, ximax, yimin, yimax, zimin, zimax, x_sub, y_sub, z_sub = \
-        nestgrid_3D(x, y, z, xlim, ylim, zlim, nsub)
-        self.xinest[l] = [ximin, ximax] # starting and ending indices on the upper-layer grid
-        self.yinest[l] = [yimin, yimax]
-        self.zinest[l] = [zimin, zimax]
-        self.xaxes[l], self.yaxes[l], self.zaxes[l] = x_sub, y_sub, z_sub
+        # initialize
+        partition = [0]
+        xnest = np.array([])
+        ynest = np.array([])
+        znest = np.array([])
+        for l in range(1, self.nlevels):
+            # axes of the parental grid
+            x, y, z = self.xaxes[l-1], self.yaxes[l-1], self.zaxes[l-1]
 
-        # upper grid
-        _nx, _ny, _nz = self.ngrids[l-1]
-        if self.xnest[l-1].size == _nx * _ny * _nz:
-            xx = self.xnest[l-1].reshape(_nx, _ny, _nz)
-            yy = self.ynest[l-1].reshape(_nx, _ny, _nz)
-            zz = self.znest[l-1].reshape(_nx, _ny, _nz)
-        else:
+            # make childe grid
+            ximin, ximax, yimin, yimax, zimin, zimax, x_sub, y_sub, z_sub = \
+            nestgrid_3D(x, y, z, self.xlim[l], self.ylim[l], self.zlim[l], self.nsub[l-1])
+            self.xinest += [ximin, ximax] # starting and ending indices on the upper-layer grid
+            self.yinest += [yimin, yimax]
+            self.zinest += [zimin, zimax]
+            self.xaxes[l], self.yaxes[l], self.zaxes[l] = x_sub, y_sub, z_sub
+            self.ngrids[l,:] = np.array([len(x_sub), len(y_sub), len(z_sub)])
+
+            # parental grid
+            _nx, _ny, _nz = self.ngrids[l-1,:]
+            #if self.xnest[l-1].size == _nx * _ny * _nz:
+            #    xx = self.xnest[l-1].reshape(_nx, _ny, _nz)
+            #    yy = self.ynest[l-1].reshape(_nx, _ny, _nz)
+            #    zz = self.znest[l-1].reshape(_nx, _ny, _nz)
+            #else:
             xx, yy, zz = np.meshgrid(x, y, z, indexing = 'ij')
-        # devide the upper grid into six sub-regions
-        # Region 1:  x from 0 to ximin, all y and z
-        R1x = xx[:ximin, :, :].ravel()
-        R1y = yy[:ximin, :, :].ravel()
-        R1z = zz[:ximin, :, :].ravel()
-        # Region 2: x from ximax+1 to nx, all y and z
-        R2x = xx[ximax+1:, :, :].ravel()
-        R2y = yy[ximax+1:, :, :].ravel()
-        R2z = zz[ximax+1:, :, :].ravel()
-        # Region 3: x from xi0 to ximax, y from 0 to yimin, and all z
-        R3x = xx[ximin:ximax+1, :yimin, :].ravel()
-        R3y = yy[ximin:ximax+1, :yimin, :].ravel()
-        R3z = zz[ximin:ximax+1, :yimin, :].ravel()
-        # Region 4: x from xi0 to ximax, y from yimax+1 to ny, and all z
-        R4x = xx[ximin:ximax+1, yimax+1:, :].ravel()
-        R4y = yy[ximin:ximax+1, yimax+1:, :].ravel()
-        R4z = zz[ximin:ximax+1, yimax+1:, :].ravel()
-        # Region 5: x from xi0 to ximax, y from yimin to yimax and z from 0 to zimin
-        R5x = xx[ximin:ximax+1, yimin:yimax+1, :zimin].ravel()
-        R5y = yy[ximin:ximax+1, yimin:yimax+1, :zimin].ravel()
-        R5z = zz[ximin:ximax+1, yimin:yimax+1, :zimin].ravel()
-        # Region 6: x from xi0 to ximax, y from yimin to yimax and z from zimax+1 to nz
-        R6x = xx[ximin:ximax+1, yimin:yimax+1, zimax+1:].ravel()
-        R6y = yy[ximin:ximax+1, yimin:yimax+1, zimax+1:].ravel()
-        R6z = zz[ximin:ximax+1, yimin:yimax+1, zimax+1:].ravel()
-        self.xnest[l-1] = np.concatenate([R1x, R2x, R3x, R4x, R5x, R6x]) # update
-        self.ynest[l-1] = np.concatenate([R1y, R2y, R3y, R4y, R5y, R6y]) # update
-        self.znest[l-1] = np.concatenate([R1z, R2z, R3z, R4z, R5z, R6z]) # update
 
-        # child grid
+            # devide the upper grid into six sub-regions
+            # Region 1:  x from 0 to ximin, all y and z
+            R1x = xx[:ximin, :, :].ravel()
+            R1y = yy[:ximin, :, :].ravel()
+            R1z = zz[:ximin, :, :].ravel()
+            # Region 2: x from ximax+1 to nx, all y and z
+            R2x = xx[ximax+1:, :, :].ravel()
+            R2y = yy[ximax+1:, :, :].ravel()
+            R2z = zz[ximax+1:, :, :].ravel()
+            # Region 3: x from xi0 to ximax, y from 0 to yimin, and all z
+            R3x = xx[ximin:ximax+1, :yimin, :].ravel()
+            R3y = yy[ximin:ximax+1, :yimin, :].ravel()
+            R3z = zz[ximin:ximax+1, :yimin, :].ravel()
+            # Region 4: x from xi0 to ximax, y from yimax+1 to ny, and all z
+            R4x = xx[ximin:ximax+1, yimax+1:, :].ravel()
+            R4y = yy[ximin:ximax+1, yimax+1:, :].ravel()
+            R4z = zz[ximin:ximax+1, yimax+1:, :].ravel()
+            # Region 5: x from xi0 to ximax, y from yimin to yimax and z from 0 to zimin
+            R5x = xx[ximin:ximax+1, yimin:yimax+1, :zimin].ravel()
+            R5y = yy[ximin:ximax+1, yimin:yimax+1, :zimin].ravel()
+            R5z = zz[ximin:ximax+1, yimin:yimax+1, :zimin].ravel()
+            # Region 6: x from xi0 to ximax, y from yimin to yimax and z from zimax+1 to nz
+            R6x = xx[ximin:ximax+1, yimin:yimax+1, zimax+1:].ravel()
+            R6y = yy[ximin:ximax+1, yimin:yimax+1, zimax+1:].ravel()
+            R6z = zz[ximin:ximax+1, yimin:yimax+1, zimax+1:].ravel()
+
+            Rx = np.concatenate([R1x, R2x, R3x, R4x, R5x, R6x])
+            nl = Rx.size
+            partition.append(partition[l-1] + nl)
+            xnest = np.concatenate([xnest, Rx]) # update
+            ynest = np.concatenate([ynest, R1y, R2y, R3y, R4y, R5y, R6y]) # update
+            znest = np.concatenate([znest, R1z, R2z, R3z, R4z, R5z, R6z]) # update
+
+        # the deepest child grid
         xx_sub, yy_sub, zz_sub = np.meshgrid(x_sub, y_sub, z_sub, indexing = 'ij')
-        self.xnest[l] = xx_sub.ravel()
-        self.ynest[l] = yy_sub.ravel()
-        self.znest[l] = zz_sub.ravel()
-        self.ngrids[l] = (len(x_sub), len(y_sub), len(z_sub))
+        xnest = np.concatenate([xnest, xx_sub.ravel()]) # update
+        ynest = np.concatenate([ynest, yy_sub.ravel()]) # update
+        znest = np.concatenate([znest, zz_sub.ravel()]) # update
+        self.xnest = xnest
+        self.ynest = ynest
+        self.znest = znest
+        self.partition = partition
 
 
     def collapse(self, d, upto = None):
@@ -475,61 +500,141 @@ class Nested3DGrid(object):
         ----------
         d (list): List of data on the nested grid
         '''
-        d_col = d[-1] # starting from the inner most grid
         lmax = 0 if upto is None else upto
+        d_col = d[self.partition[-1]:] # starting from the inner most grid
+        d_col = d_col.reshape(tuple(self.ngrids[-1,:]))
         for l in range(self.nlevels-1,lmax,-1):
             nsub = self.nsub[l-1]
-            ximin, ximax = self.xinest[l]
-            yimin, yimax = self.yinest[l]
-            zimin, zimax = self.zinest[l]
+            ximin, ximax = self.xinest[l*2:(l+1)*2]
+            yimin, yimax = self.yinest[l*2:(l+1)*2]
+            zimin, zimax = self.zinest[l*2:(l+1)*2]
             # collapse data on the inner grid
-            _d = self.binning_onsubgrid_layered(d_col.reshape(self.ngrids[l]), nsub)
+            _d = self.binning_onsubgrid_layered(d_col, nsub)
             #print(ximin, ximax, yimin, yimax, zimin, zimax)
 
-            # go next layer
-            nx, ny, nz = self.ngrids[l-1] # size of the upper layer
+            # go upper layer
+            nx, ny, nz = self.ngrids[l-1,:] # size of the upper layer
             d_col = np.full((nx, ny, nz), np.nan)
 
             # insert collapsed data
             d_col[ximin:ximax+1, yimin:yimax+1, zimin:zimax+1] = _d
 
             # fill upper layer data
+            d_up = d[self.partition[l-1]:self.partition[l]]
             # Region 1: x from zero to ximin, all y and z
             d_col[:ximin, :, :] = \
-            d[l-1][:ximin * ny * nz].reshape((ximin, ny, nz))
+            d_up[:ximin * ny * nz].reshape((ximin, ny, nz))
             # Region 2: x from ximax to nx, all y and z
             i0 = ximin * ny * nz
             i1 = i0 + (nx - ximax - 1) * ny * nz
             d_col[ximax+1:, :, :] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (nx - ximax - 1, ny, nz))
             # Region 3
             i0 = i1
             i1 = i0 + (ximax + 1 - ximin) * yimin * nz
             d_col[ximin:ximax+1, :yimin, :] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (ximax + 1 - ximin, yimin, nz))
             # Region 4
             i0 = i1
             i1 = i0 + (ximax + 1 - ximin) * (ny - yimax - 1) * nz
             d_col[ximin:ximax+1, yimax+1:, :] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (ximax + 1 - ximin, ny - yimax - 1, nz))
             # Region 5
             i0 = i1
             i1 = i0 + (ximax + 1 - ximin) * (yimax + 1 - yimin) * zimin
             d_col[ximin:ximax+1, yimin:yimax+1, :zimin] = \
-            d[l-1][i0:i1].reshape(
+            d_up[i0:i1].reshape(
                 (ximax + 1 - ximin, yimax + 1 - yimin, zimin))
             # Region 6
             i0 = i1
             i1 = i0 + (ximax + 1 - ximin) * (yimax + 1 - yimin) * (nz - zimax -1)
             d_col[ximin:ximax+1, yimin:yimax+1, zimax+1:] = \
-            d[l-1][i0:].reshape(
+            d_up[i0:].reshape(
                 (ximax + 1 - ximin, yimax + 1 - yimin, nz - zimax -1))
 
-            #print(l)
-            #print(np.nonzero(np.isnan(d_col)))
+        return d_col
+
+
+    def high_dimensional_collapse(self, d, upto = None, fill = 'nan'):
+        if len(d.shape) == 2:
+            d_col = self.collapse_extra_1d(d, upto = upto, fill = fill)
+            return d_col
+        else:
+            print('ERROR\thigh_dimensional_collapse: currently only 2d data are supported.')
+            return 0
+
+
+    def collapse_extra_1d(self, d, upto = None, fill = 'nan'):
+        '''
+        Collapse given data to the mother grid.
+
+        Parameters
+        ----------
+        d (list): List of data on the nested grid
+        '''
+        lmax = 0 if upto is None else upto
+        nv, nd = d.shape
+        d_col = d[:, self.partition[-1]:] # starting from the inner most grid
+        d_col = d_col.reshape((nv, self.ngrids[-1,:][0], self.ngrids[-1,:][1], self.ngrids[-1,:][2]))
+        for l in range(self.nlevels-1,lmax,-1):
+            nsub = self.nsub[l-1]
+            ximin, ximax = self.xinest[l*2:(l+1)*2]
+            yimin, yimax = self.yinest[l*2:(l+1)*2]
+            zimin, zimax = self.zinest[l*2:(l+1)*2]
+            # collapse data on the inner grid
+            _d = self.binning_onsubgrid_layered(d_col, nsub)
+            #print(ximin, ximax, yimin, yimax, zimin, zimax)
+
+            # go upper layer
+            nx, ny, nz = self.ngrids[l-1,:] # size of the upper layer
+            if fill == 'nan':
+                d_col = np.full((nv, nx, ny, nz), np.nan)
+            elif fill == 'zero':
+                d_col = np.zeros((nv, nx, ny, nz))
+            else:
+                d_col = np.full((nv, nx, ny, nz), fill)
+
+            # insert collapsed data
+            d_col[:, ximin:ximax+1, yimin:yimax+1, zimin:zimax+1] = _d
+
+            # fill upper layer data
+            d_up = d[:, self.partition[l-1]:self.partition[l]]
+            # Region 1: x from zero to ximin, all y and z
+            d_col[:, :ximin, :, :] = \
+            d_up[:, :ximin * ny * nz].reshape((nv, ximin, ny, nz))
+            # Region 2: x from ximax to nx, all y and z
+            i0 = ximin * ny * nz
+            i1 = i0 + (nx - ximax - 1) * ny * nz
+            d_col[:, ximax+1:, :, :] = \
+            d_up[:, i0:i1].reshape(
+                (nv, nx - ximax - 1, ny, nz))
+            # Region 3
+            i0 = i1
+            i1 = i0 + (ximax + 1 - ximin) * yimin * nz
+            d_col[:, ximin:ximax+1, :yimin, :] = \
+            d_up[:, i0:i1].reshape(
+                (nv, ximax + 1 - ximin, yimin, nz))
+            # Region 4
+            i0 = i1
+            i1 = i0 + (ximax + 1 - ximin) * (ny - yimax - 1) * nz
+            d_col[:, ximin:ximax+1, yimax+1:, :] = \
+            d_up[:, i0:i1].reshape(
+                (nv, ximax + 1 - ximin, ny - yimax - 1, nz))
+            # Region 5
+            i0 = i1
+            i1 = i0 + (ximax + 1 - ximin) * (yimax + 1 - yimin) * zimin
+            d_col[:, ximin:ximax+1, yimin:yimax+1, :zimin] = \
+            d_up[:, i0:i1].reshape(
+                (nv, ximax + 1 - ximin, yimax + 1 - yimin, zimin))
+            # Region 6
+            i0 = i1
+            i1 = i0 + (ximax + 1 - ximin) * (yimax + 1 - yimin) * (nz - zimax -1)
+            d_col[:, ximin:ximax+1, yimin:yimax+1, zimax+1:] = \
+            d_up[:, i0:].reshape(
+                (nv, ximax + 1 - ximin, yimax + 1 - yimin, nz - zimax -1))
 
         return d_col
 
