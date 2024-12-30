@@ -73,13 +73,13 @@ class MultiLayerDisk(object):
         self.ys = self.grid.ynest
         self.zs = self.grid.znest
         # disk-local coordinates
-        self.xps = [None] * self.grid.nlevels
-        self.yps = [None] * self.grid.nlevels
-        self.zps = [None] * self.grid.nlevels
-        self.Rs = [None] * self.grid.nlevels # R in cylindarical coordinates
-        self.ts = [None] * self.grid.nlevels # theta
+        self.xps = None
+        self.yps = None
+        self.zps = None
+        self.Rs = None # R in cylindarical coordinates
+        self.ts = None # theta
         # dust layer
-        self.Rmid = [None] * self.grid.nlevels
+        self.Rmid = None
 
         # velocity
         self.nv = len(v)
@@ -180,39 +180,36 @@ class MultiLayerDisk(object):
         '''
         Transfer the plane of sky coordinates to disk local coordinates.
         '''
-        self.zoffset = [None] * self.grid.nlevels
-        for l in range(self.grid.nlevels):
-            xp = self.xs[l]
-            yp = self.ys[l]
-            zp = self.zs[l]
-            # rotate by PA
-            x, y = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
-            # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
-            # adoptive z axis
-            if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > cosi_lim):
-                # center origin of z axis in the disk midplane
-                zoffset = - np.tan(self._inc_rad) * y # zp_mid(xp, yp)
-                self.zoffset[l] = zoffset
-                _zp = zp + zoffset # shift z center
-                x, y, z = xrot(x, y, _zp, self._inc_rad) # rot = - (-inc)
-            else:
-                x, y, z = xrot(x, y, zp, self._inc_rad) # rot = - (-inc)
-                self.zoffset[l] = np.zeros(x.size)
+        xp = self.xs
+        yp = self.ys
+        zp = self.zs
+        # rotate by PA
+        x, y = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
+        # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
+        # adoptive z axis
+        if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > cosi_lim):
+            # center origin of z axis in the disk midplane
+            zoffset = - np.tan(self._inc_rad) * y # zp_mid(xp, yp)
+            self.zoffset = zoffset
+            _zp = zp + zoffset # shift z center
+            x, y, z = xrot(x, y, _zp, self._inc_rad) # rot = - (-inc)
+        else:
+            x, y, z = xrot(x, y, zp, self._inc_rad) # rot = - (-inc)
+            self.zoffset = np.zeros(x.size)
 
-            self.xps[l] = x
-            self.yps[l] = y
-            self.zps[l] = z
+        self.xps = x
+        self.yps = y
+        self.zps = z
 
+        # cylindarical coordinates
+        self.Rs = np.sqrt(x * x + y * y) # radius
+        self.ts = np.arctan2(y, x) # azimuthal angle (rad)
 
-            # cylindarical coordinates
-            self.Rs[l] = np.sqrt(x * x + y * y) # radius
-            self.ts[l] = np.arctan2(y, x) # azimuthal angle (rad)
-
-            # for dust layer
-            x, y = rot2d(self.grid2D.xnest[l] - self.dx0, 
-                self.grid2D.ynest[l] - self.dy0, self._pa_rad - 0.5 * np.pi) # in 2D
-            y /= np.cos(self._inc_rad)
-            self.Rmid[l] = np.sqrt(x * x + y * y) # radius
+        # for dust layer
+        x, y = rot2d(self.grid2D.xnest - self.dx0, 
+            self.grid2D.ynest - self.dy0, self._pa_rad - 0.5 * np.pi) # in 2D
+        y /= np.cos(self._inc_rad)
+        self.Rmid = np.sqrt(x * x + y * y) # radius
         self.adoptive_zaxis = adoptive_zaxis
 
 
@@ -431,33 +428,14 @@ class MultiLayerDisk(object):
 
     def build(self, rin = 0.1, dv_mode = 'total',
         collapse = False):
-        # for each nested level
-        T_g = [None] * self.grid.nlevels
-        T_d = [None] * self.grid.nlevels
-        n_gf = [None] * self.grid.nlevels
-        n_gr = [None] * self.grid.nlevels
-        tau_d = [None] * self.grid.nlevels
-        vlos = [None] * self.grid.nlevels
-        dv = [None] * self.grid.nlevels
-
-        if any([i is None for i in self.xps]) | any([i is None for i in self.yps])\
-         | any([i is None for i in self.zps]):
+        if any([self.xps is None, self.yps is None, self.zps is None]):
             self.deproject_grid()
 
-        for l in range(self.grid.nlevels):
-            # get temperature and volume tau
-            _T_g, _vlos, _n_gf, _n_gr, _dv = \
-            self.build_gas_layer(self.Rs[l].copy(), 
-                self.ts[l].copy(), self.zps[l].copy(), rin = rin, dv_mode = dv_mode)
-            _T_d, _tau_d = self.build_dust_layer(self.Rmid[l].copy(), rin = rin)
-            _vlos += self.vsys
-            T_g[l] = _T_g
-            vlos[l] = _vlos
-            n_gf[l] = _n_gf
-            n_gr[l] = _n_gr
-            T_d[l] = _T_d
-            tau_d[l] = _tau_d
-            dv[l] = _dv
+        T_g, vlos, n_gf, n_gr, dv = \
+        self.build_gas_layer(self.Rs.copy(), 
+            self.ts.copy(), self.zps.copy(), rin = rin, dv_mode = dv_mode)
+        T_d, tau_d = self.build_dust_layer(self.Rmid.copy(), rin = rin)
+        vlos += self.vsys
 
         if collapse:
             T_g = self.grid.collapse(T_g)
@@ -485,87 +463,31 @@ class MultiLayerDisk(object):
         #  calculate column density and density-weighted temperature 
         #  of each gas layer at every velocity channel.
         if (self.dv > 0.) | (dv_mode == 'thermal'):
-            _Tv_g = [[] for _ in range(self.nv)]  # x,y,z,v
-            _nv_gf = [[] for _ in range(self.nv)]
-            _nv_gr = [[] for _ in range(self.nv)]
+            # line profile function
+            lnprofs = spectra.glnprof_series(self.v, vlos, dv)
 
+            # get nv
             #start = time.time()
-            for l in range(self.grid.nlevels):
-                nx, ny, nz = self.grid.ngrids[l]
-
-                _vlos = vlos[l]
-                _dv = dv[l]
-                # new version
-                lnprofs = spectra.glnprof_series(self.v, _vlos, _dv)
-
-                #start = time.time()
-                n_cube = linecube.to_xyzv(
-                    np.array([n_gf[l], n_gr[l]]), lnprofs)
-                #end = time.time()
-                #print('to_xyzv takes %.2f'%(end-start))
-
-                #start = time.time()
-                #print('appending... at level %i'%l)
-                for i in range(self.nv):
-                    _Tv_g[i].append(T_g[l])
-                    _nv_gf[i].append(n_cube[0,i,:])
-                    _nv_gr[i].append(n_cube[1,i,:])
-                #end = time.time()
-                #print('takes %.2f'%(end-start))
+            nv_cube = linecube.to_xyzv(
+                np.array([n_gf, n_gr]), lnprofs)
             #end = time.time()
-            #print('takes %.2f'%(end-start))
+            #print('to_xyzv takes %.2f'%(end-start))
 
-            Nv_gf = np.zeros((self.nv, self.nx, self.ny))
-            Tv_gf = np.zeros((self.nv, self.nx, self.ny))
-            Nv_gr = np.zeros((self.nv, self.nx, self.ny))
-            Tv_gr = np.zeros((self.nv, self.nx, self.ny))
-            for i in range(self.nv):
-                Tv_g = self.grid.collapse(_Tv_g[i])
-                nv_gf = self.grid.collapse(_nv_gf[i])
-                nv_gr = self.grid.collapse(_nv_gr[i])
+            # collapse
+            #start = time.time()
+            T_g = self.grid.collapse(T_g)
+            nv_gf = self.grid.high_dimensional_collapse(nv_cube[0,:,:], fill = 'zero')
+            nv_gr = self.grid.high_dimensional_collapse(nv_cube[1,:,:], fill = 'zero')
+            #end = time.time()
+            #print('collapsing takes %.2f'%(end-start))
 
-                # fore side
-                _Nv_gf = np.nansum(nv_gf * self.grid.dz * auTOcm, axis = 2)
-                #print('max Nv_gf: %.3e'%(np.nanmax(_Nv_gf)))
-                Nv_gf[i,:,:] = _Nv_gf
-                where_nonzero = _Nv_gf > 0.
-                Tv_gf[i,:,:][where_nonzero] = np.nansum(
-                    Tv_g * nv_gf * self.grid.dz * auTOcm, axis = 2
-                    )[where_nonzero] / _Nv_gf[where_nonzero]
-                # rear side
-                _Nv_gr = np.nansum(nv_gr * self.grid.dz * auTOcm, axis = 2)
-                Nv_gr[i,:,:] = _Nv_gr
-                where_nonzero = _Nv_gr > 0.
-                Tv_gr[i,:,:][where_nonzero] = np.nansum(
-                    Tv_g * nv_gr * self.grid.dz * auTOcm, axis = 2
-                    )[where_nonzero] / _Nv_gr[where_nonzero]
-
-            Nv_gf = np.transpose(Nv_gf, (0,2,1)) # v, y, x
-            Tv_gf = np.transpose(Tv_gf, (0,2,1)) # v, y, x
-            Nv_gr = np.transpose(Nv_gr, (0,2,1)) # v, y, x
-            Tv_gr = np.transpose(Tv_gr, (0,2,1)) # v, y, x
-            '''
-            #print(self.grid.ngrids)
-
-            Tv_gf = np.zeros((self.nv, self.nx, self.ny))
-            print(self.grid.ngrids)
-            for i in range(1):
-                Tv_g = fast_3d_collapse(_Tv_g[i], self.grid.nlevels, 
-                        self.grid.ngrids, self.grid.nsub, 
-                        self.grid.xinest, self.grid.yinest, self.grid.zinest)
-
+            # to cube
             Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
-                transfer.nested_Tnv_to_cube(
-                    (self.grid.nlevels, 
-                        self.grid.ngrids, self.grid.nsub, 
-                        self.grid.xinest, self.grid.yinest, self.grid.zinest),
-                    _Tv_g, _nv_gf, _nv_gr, 
-                    self.nx, self.ny, self.nz, self.nv,
-                    self.grid.dz * auTOcm,
-                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid
-                    ),
-                (0,1,3,2))
-            '''
+                transfer.Tnv_to_cube(
+                T_g, nv_gf, nv_gr,
+                self.grid.dz * auTOcm,
+                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid),
+                (0,1,3,2,))
         else:
             Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
             Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
@@ -578,15 +500,15 @@ class MultiLayerDisk(object):
         # density to tau
         #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
         #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
-        if (self.line is not None) * (self.iline is not None):
-            tau_v_gf = self.mol.get_tau(self.line, self.iline, 
-                Nv_gf, Tv_gf, delv = None, grid_approx = True)
-            tau_v_gr = self.mol.get_tau(self.line, self.iline, 
-                Nv_gr, Tv_gr, delv = None, grid_approx = True)
-        else:
-            # ignore temperature effect on conversion from column density to tau
-            tau_v_gf = Nv_gf
-            tau_v_gr = Nv_gr
+        #if (self.line is not None) * (self.iline is not None):
+        #    tau_v_gf = self.mol.get_tau(self.line, self.iline, 
+        #        Nv_gf, Tv_gf, delv = None, grid_approx = True)
+        #    tau_v_gr = self.mol.get_tau(self.line, self.iline, 
+        #        Nv_gr, Tv_gr, delv = None, grid_approx = True)
+        #else:
+        #    # ignore temperature effect on conversion from column density to tau
+        #    tau_v_gf = Nv_gf
+        #    tau_v_gr = Nv_gr
         #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
 
 

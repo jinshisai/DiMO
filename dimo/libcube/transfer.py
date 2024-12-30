@@ -270,12 +270,9 @@ def Tnlnp_to_cube(Tg, n_gf, n_gr,
     return Tv_gf, Tv_gr, tau_v_gf, tau_v_gr
 
 
-
-
 @njit(parallel=True) # fastmath=True
-def nested_Tnv_to_cube(grid_info, Tv_g, nv_gf, nv_gr,
-    nx, ny, nz, nv,
-    dz, freq, Aul, Eu, gu, Qgrid):
+def Tnv_to_cube(Tg, nv_gf, nv_gr, dz,
+    freq, Aul, Eu, gu, Qgrid):
     """
     Compute a 4D cube from temperature, density, and velocity information,
     with optical depth calculation. and integration termination based on tau.
@@ -283,9 +280,8 @@ def nested_Tnv_to_cube(grid_info, Tv_g, nv_gf, nv_gr,
     Parameters
     ----------
      T_g: 3D numpy array for temperature.
-     n_gf: 3D numpy array for density (foreground).
-     n_gr: 3D numpy array for density (rear side).
-     lnprof_series: 4D numpy array for line profile function.
+     nv_gf: 4D numpy array for density (foreground).
+     nv_gr: 4D numpy array for density (rear side).
      delv: 3D array for line width
      dv: velocity resolution
      dz: cell size along z-axis (cm).
@@ -298,7 +294,7 @@ def nested_Tnv_to_cube(grid_info, Tv_g, nv_gf, nv_gr,
     Returns:
         Tncube: 4D numpy array of the resulting cube.
     """
-    nlevels, ngrids, nsub, xinest, yinest, zinest = grid_info
+    nv, nx, ny, nz = nv_gf.shape
 
     # output
     Tv_gf = np.zeros((nv, nx, ny))
@@ -307,10 +303,6 @@ def nested_Tnv_to_cube(grid_info, Tv_g, nv_gf, nv_gr,
     tau_v_gr = np.zeros((nv, nx, ny))
 
     for i in prange(nv):
-        _Tv_g = fast_3d_collapse(Tv_g[i], nlevels, ngrids, nsub, xinest, yinest, zinest)
-        _nv_gf = fast_3d_collapse(nv_gf[i], nlevels, ngrids, nsub, xinest, yinest, zinest)
-        _nv_gr = fast_3d_collapse(nv_gr[i], nlevels, ngrids, nsub, xinest, yinest, zinest)
-
         for j in range(nx):
             for k in range(ny):
                 T_gf_sum = 0.0
@@ -323,28 +315,27 @@ def nested_Tnv_to_cube(grid_info, Tv_g, nv_gf, nv_gr,
                         #print('Went over 30!')
                         break
 
-                    if (_nv_gf[j,k,l] > 0.) | (_nv_gr[j,k,l] > 0.):
-                        _Tg = _Tv_g[j,k,l]
+                    if (nv_gf[i,j,k,l] > 0.) | (nv_gr[i,j,k,l] > 0.):
+                         # temperature
+                        _Tg = Tg[j,k,l]
                         Qrot = interp(_Tg, Qgrid[0], Qgrid[1])
-                    else:
-                        continue
 
-                    if _nv_gf[j,k,l] > 0.:
-                        alpha_v_gf = nT_to_alpha(
-                            _nv_gf[j,k,l], _Tg, freq, Aul, Eu, gu, Qrot, 1.
+                        if nv_gf[i,j,k,l] > 0.:
+                            alpha_v_gf = nT_to_alpha(
+                            nv_gf[i,j,k,l], _Tg, freq, Aul, Eu, gu, Qrot, 1.
                             ) # /delv is already included in line profile function
 
-                        # tau & temperature
-                        tau_gf += alpha_v_gf # integration
-                        T_gf_sum += _Tg * alpha_v_gf # weighted summation
+                            # tau & temperature
+                            tau_gf += alpha_v_gf # integration
+                            T_gf_sum += _Tg * alpha_v_gf # weighted summation
 
-                    if _nv_gr[j,k,l] > 0.:
-                        alpha_v_gr = nT_to_alpha(
-                            _nv_gr[j,k,l], _Tg, freq, Aul, Eu, gu, Qrot, 1.)
+                        if nv_gr[i,j,k,l] > 0.:
+                            alpha_v_gr = nT_to_alpha(
+                                nv_gr[i,j,k,l], _Tg, freq, Aul, Eu, gu, Qrot, 1.)
 
-                        # tau & temperature
-                        tau_gr += alpha_v_gr # integration
-                        T_gr_sum += _Tg * alpha_v_gr # weighted summation
+                            # tau & temperature
+                            tau_gr += alpha_v_gr # integration
+                            T_gr_sum += _Tg * alpha_v_gr # weighted summation
 
 
                 # Calculate mean temperature and store results
