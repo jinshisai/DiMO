@@ -1,6 +1,7 @@
 # import modules
 import numpy as np
 import sys
+import copy
 import matplotlib.pyplot as plt
 from scipy.optimize import root, minimize
 from scipy.signal import convolve
@@ -11,8 +12,9 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .models import MultiLayerDisk, ThreeLayerDisk, SingleLayerDisk
-from .grid import Nested2DGrid, SubGrid2D
+from .grid import Nested2DGrid, SubGrid2D, Nested3DObsGrid
 from .mpe import BayesEstimator
+from .builder import Builder
 
 
 np.random.seed(42)
@@ -576,7 +578,7 @@ class DiMO(object):#, FitThinModel):
     def __init__(self, model, params_free, params_fixed, 
         beam = None, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
-        n_nest = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
+        n_nest = None, zstrech = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
         xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10.):
 
         # parameter checks
@@ -584,7 +586,7 @@ class DiMO(object):#, FitThinModel):
             _model = model()
         except:
             _model = model(np.arange(0,3,1),np.arange(0,3,1),np.arange(0,3,1),np.arange(0,3,1))
-        _model_keys = _model.param_keys.copy()
+        _model_keys = _model.get_paramkeys()
         _input_keys = list(params_free.keys()) + list(params_fixed.keys())
         if sorted(_model_keys) != sorted(_input_keys):
             print('ERROR\tModelFitter: input keys do not match model input parameters.')
@@ -599,6 +601,7 @@ class DiMO(object):#, FitThinModel):
         self.params_fixed = params_fixed
         self.pfixed_keys = list(params_fixed.keys())
         _params = merge_dictionaries(params_free, params_fixed)
+        self._params_ini = _params
         self.params_ini = list(
             {k: _params[k] for k in _model_keys}.values()
             ) # re-ordered elements
@@ -610,6 +613,7 @@ class DiMO(object):#, FitThinModel):
         self.sampling = sampling
         self.n_subgrid = n_subgrid
         self.n_nest = n_nest
+        self.zstrech = zstrech
         self.x_nestlim, self.y_nestlim, self.z_nestlim = x_nestlim, y_nestlim, z_nestlim
         self.xscale, self.yscale = xscale, yscale
         self.line = line
@@ -888,10 +892,6 @@ class DiMO(object):#, FitThinModel):
             exp = -0.5 * np.nansum((d-mdl)**2/(derr*derr) 
                 + np.log(2.*np.pi*derr*derr)) / Rbeam_pix
 
-            #print(np.isfinite(exp))
-            #print('Mean: %13.3e'%(np.sqrt(np.nanmean((mdl - d)**2.)/derr**2.)))
-            #print('ideal: %13.3e'%(-0.5 * np.nansum((d-d)**2/(derr*derr) + np.log(2.*np.pi*derr*derr)) / Rbeam_pix))
-            #print('lnlike: %13.3e'%(exp))
             if np.isnan(exp):
                 return -np.inf
             else:
@@ -903,11 +903,16 @@ class DiMO(object):#, FitThinModel):
 
 
         # setup model
-        model = self.model(x, y, z, v,
-            xlim = None, ylim = None, zlim = None,
-            nsub = self.n_nest, reslim = self.reslim,
-            line = self.line, iline = self.iline,
-            adoptive_zaxis = True, cosi_lim = 0.5, beam = self.beam,)
+        model = Builder(x, y, z, v, 
+            self.model, nsub = self.n_nest, zstrech = self.zstrech, 
+            reslim = self.reslim, beam = self.beam,
+            line = self.line, iline = self.iline, rin = self.rin,
+            adoptive_zaxis = True, cosi_lim = 0.5,)
+        #model = self.model(x, y, z, v,
+        #    xlim = None, ylim = None, zlim = None,
+        #    nsub = self.n_nest, reslim = self.reslim,
+        #    line = self.line, iline = self.iline,
+        #    adoptive_zaxis = True, cosi_lim = 0.5, beam = self.beam,)
         model.grid.gridinfo()
 
         # renew grid every fit or not
@@ -918,9 +923,9 @@ class DiMO(object):#, FitThinModel):
             renew_grid = False
 
         # make grid
-        model.set_params(*self.params_ini)
+        model.set_model(self._params_ini)
         model.deproject_grid()
-        #model.show_model_sideview()
+        model.show_model_sideview(showfig = False, savefig = True, cmap = 'coolwarm')
 
 
         # define fitting function
@@ -938,13 +943,13 @@ class DiMO(object):#, FitThinModel):
             #print('p input')
             #print(params_free)
             _params_full = merge_dictionaries(params_free, self.params_fixed)
-            params_full = list(
-                {k: _params_full[k] for k in self.model_keys}.values()
-                ) # reordered elements
+            #params_full = list(
+            #    {k: _params_full[k] for k in self.model_keys}.values()
+            #    ) # reordered elements
 
             # update parameters
-            _model = model.copy() # to make sure parallel calculations go well
-            _model.set_params(*params_full)
+            _model = copy.deepcopy(model) # to make sure parallel calculations go well
+            _model.set_model(_params_full)
 
             # renew grid
             if renew_grid:
@@ -953,13 +958,7 @@ class DiMO(object):#, FitThinModel):
             # cube on the original grid
             modelcube = _model.build_cube(
                 Tcmb = Tcmb, f0 = f0, dist = self.dist, 
-                dv_mode = dv_mode, rin = self.rin)
-
-            # debug
-            #print('Iv,max out: %13.2e'%(np.nanmax(modelcube)))
-            #print('Iv,data: %13.2e'%(np.nanmax(d_smpld)))
-            #print(np.sqrt(np.nanmean(d_smpld**2.)/derr**2.))
-            #print(np.sqrt(np.nanmean((modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x] - d_smpld)**2.)/derr**2.))
+                dv_mode = dv_mode,)
 
             return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
 
