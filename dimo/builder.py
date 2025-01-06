@@ -439,12 +439,12 @@ class Builder(object):
 
     def show_model_sideview(self, 
         dv_mode='total', cmap = 'viridis', 
-        savefig = False, showfig = True, outname = 'model_sideview'):
+        savefig = False, showfig = True, 
+        outname = 'model_sideview', vmax = 0.90, vmin = 0.):
         T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode=dv_mode)
         #n_g = self.grid.collapse(n_g)
 
-        vmax = np.nanmax(n_g) * 0.01
-        vmin = 0.
+        vmax *= np.nanmax(n_g)
 
         #fig = plt.figure()
         #ax = fig.add_subplot(111)
@@ -509,7 +509,7 @@ class Builder(object):
             ax = ax1, vmax = np.nanmax(n_g) * 0.01, cmap = cmap)
         '''
 
-        if savefig: fig.savefig('outname' + '.png', dpi = 300, transparent = True)
+        if savefig: fig.savefig(outname + '.png', dpi = 300, transparent = True)
         if showfig: plt.show()
         plt.close()
 
