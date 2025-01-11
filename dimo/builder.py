@@ -38,160 +38,6 @@ auTOcm = units.au.to('cm') # 1 au (cm)
 np.seterr(divide='ignore')
 
 
-class Builder_dev(object):
-    '''
-    A disk model with Two Thick Layers (TTL) with a thin dust layer.
-
-    '''
-
-    def __init__(self, axes: list, model,
-        xlim: list | None = None, ylim: list | None = None, zlim: list | None = None,
-        nsub: list | None = None, zstrech: list | None = None, reslim: float = 10,
-        adoptive_zaxis: bool = True, cosi_lim: float = 0.5, 
-        beam: list | None = None, line: str | None = None, iline: int | None = None,
-        Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,
-        coordinate = 'sph/sym'):
-        '''
-        Set up model grid and initialize model.
-
-        Parameters
-        ----------
-        x, y, z (3D numpy ndarrays): Three dimensional coordinates aligned plane of sky (au).
-        '''
-        super(Builder, self).__init__()
-
-        if coordinate_type == 'sph/sym':
-            self.build_grid(self, axes)
-
-        self.model = model
-
-
-    def build_grid(self, axes):
-        r, t = axes
-        self.r = r
-        self.t = t
-
-        rr, tt = np.meshgrid(r, t, indexing = 'ij')
-        zz = rr * np.cos(tt)
-        self.rs = rr.ravel()
-        self.zs = zz.ravel()
-        self.ts = tt.ravel()
-        self.Rs = (rr * np.sin(tt)).ravel()
-
-
-    def build_cube(self, 
-        Tcmb = 2.73, f0 = 230., 
-        dist = 140., dv_mode = 'total', 
-        contsub = True, return_Ttau = False):
-        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(rin = rin, dv_mode = dv_mode)
-
-        # dust
-        T_d = self.grid2D.collapse(T_d)
-        tau_d = self.grid2D.collapse(tau_d)
-
-        # To cube
-        #  calculate column density and density-weighted temperature 
-        #  of each gas layer at every velocity channel.
-        if (self.dv > 0.) | (dv_mode == 'thermal'):
-            # line profile function
-            lnprofs = spectra.glnprof_series(self.v, vlos, dv)
-
-            # get nv
-            #start = time.time()
-            nv_cube = linecube.to_xyzv(
-                np.array([n_gf, n_gr]), lnprofs)
-            #end = time.time()
-            #print('to_xyzv takes %.2f'%(end-start))
-
-            # collapse
-            #start = time.time()
-            T_g = self.grid.collapse(T_g)
-            nv_gf = self.grid.high_dimensional_collapse(nv_cube[0,:,:], fill = 'zero')
-            nv_gr = self.grid.high_dimensional_collapse(nv_cube[1,:,:], fill = 'zero')
-            #end = time.time()
-            #print('collapsing takes %.2f'%(end-start))
-
-            # to cube
-            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
-                transfer.Tnv_to_cube(
-                T_g, nv_gf, nv_gr,
-                self.grid.dz * auTOcm,
-                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid),
-                (0,1,3,2,))
-        else:
-            Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
-            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
-            (0,1,3,2,))
-
-        Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
-        Tv_gr = Tv_gr.clip(1., None)
-
-
-        # density to tau
-        #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
-        #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
-        #if (self.line is not None) * (self.iline is not None):
-        #    tau_v_gf = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gf, Tv_gf, delv = None, grid_approx = True)
-        #    tau_v_gr = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gr, Tv_gr, delv = None, grid_approx = True)
-        #else:
-        #    # ignore temperature effect on conversion from column density to tau
-        #    tau_v_gf = Nv_gf
-        #    tau_v_gr = Nv_gr
-        #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
-
-
-        if return_Ttau:
-            return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
-
-        # radiative transfer
-        _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
-            dist = dist, au = True)
-        #_Bv = lambda T, v: Bv(T, v)
-        _Bv_cmb = _Bv(Tcmb, f0)
-        _Bv_gf  = _Bv(Tv_gf, f0)
-        _Bv_gr  = _Bv(Tv_gr, f0)
-        _Bv_d   = _Bv(T_d, f0)
-        Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
-            tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
-
-        if contsub == False:
-            Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
-            Iv_d = np.tile(Iv_d, (self.nv,1,1,))
-            Iv += Iv_d # add continuum back
-
-        # Convolve beam if given
-        #print('I_v_nobeam max: %13.2e'%(np.nanmax(Iv)))
-        if self.beam is not None:
-            Iv = beam_convolution(self.grid2D.xx.copy(), self.grid2D.yy.copy(), Iv, 
-                self.beam, self.gaussbeam)
-
-        #print('I_v max: %13.2e'%(np.nanmax(Iv)))
-        return Iv
-
-
-
-
-    def define_beam(self, beam):
-        '''
-        Parameters
-        ----------
-         beam (list): Observational beam. Must be given in a format of 
-                      [major (au), minor (au), pa (deg)].
-        '''
-        # save beam info
-        self.beam = beam
-        # define Gaussian beam
-        nx, ny = self.grid2D.nx, self.grid2D.ny
-        gaussbeam = gaussian2d(self.grid2D.xx.copy(), self.grid2D.yy.copy(), 1., 
-            self.grid2D.xx[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
-        self.grid2D.yy[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
-        beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
-        gaussbeam /= np.sum(gaussbeam)
-        self.gaussbeam = gaussbeam
-
-
 
 class Builder(object):
     """docstring for Observer"""
@@ -342,12 +188,8 @@ class Builder(object):
         T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode = dv_mode)
 
         # dust
-        T_d = self.grid2D.collapse(T_d)
-        tau_d = self.grid2D.collapse(tau_d)
-
-        # replace nan
-        #T_g[np.isnan(T_g)] = 0.
-        #n_g[np.isnan(n_g)] = 0.
+        #T_d = self.grid2D.collapse(T_d)
+        #tau_d = self.grid2D.collapse(tau_d)
 
         # To cube
         #  calculate column density and density-weighted temperature 
@@ -361,29 +203,20 @@ class Builder(object):
             nv_cube = linecube.to_xyzv(
                 np.array([n_g.ravel()]), lnprofs)
             nv_g = nv_cube[0].reshape((self.nv, self.grid.nxy, self.nz))
-            #end = time.time()
-            #print('to_xyzv takes %.2f'%(end-start))
-
-            # collapse
-            #start = time.time()
-            #T_g = self.grid.collapse(T_g)
-            #nv_g = self.grid.high_dimensional_collapse(nv_cube[0,:,:], fill = 'zero')
-            #end = time.time()
-            #print('collapsing takes %.2f'%(end-start))
 
             # to cube
             Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnv_to_cube(
                 T_g, nv_g, self.grid.znest,
                 self.grid.dznest * auTOcm,
                 self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
-            Tv_gf = self.grid.collapse2D(Tv_gf)
-            Tv_gr = self.grid.collapse2D(Tv_gr)
-            tau_v_gf = self.grid.collapse2D(tau_v_gf)
-            tau_v_gr = self.grid.collapse2D(tau_v_gr)
+            #Tv_gf = self.grid.collapse2D(Tv_gf)
+            #Tv_gr = self.grid.collapse2D(Tv_gr)
+            #tau_v_gf = self.grid.collapse2D(tau_v_gf)
+            #tau_v_gr = self.grid.collapse2D(tau_v_gr)
 
             # v, x, y to v, y, x
-            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
-                np.array([Tv_gf, Tv_gr, tau_v_gf, tau_v_gr]), axes = (0,1,3,2))
+            #Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
+            #    np.array([Tv_gf, Tv_gr, tau_v_gf, tau_v_gr]), axes = (0,1,3,2))
         else:
             Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
             Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
@@ -422,18 +255,23 @@ class Builder(object):
         Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
             tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
 
+        # contsub
         if contsub == False:
             Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
-            Iv_d = np.tile(Iv_d, (self.nv,1,1,))
+            Iv_d = np.tile(Iv_d, (self.nv,1,))
             Iv += Iv_d # add continuum back
 
+
+        # collapse to cube
+        Iv = np.transpose(
+            self.grid.collapse2D(Iv),
+            axes = (0,2,1)) # (v, x, y) to (v, y, x)
+
         # Convolve beam if given
-        #print('I_v_nobeam max: %13.2e'%(np.nanmax(Iv)))
         if self.beam is not None:
             Iv = beam_convolution(self.grid2D.xx.copy(), self.grid2D.yy.copy(), Iv, 
                 self.beam, self.gaussbeam)
 
-        #print('I_v max: %13.2e'%(np.nanmax(Iv)))
         return Iv
 
 

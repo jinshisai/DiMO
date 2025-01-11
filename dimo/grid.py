@@ -1627,18 +1627,18 @@ class Nested3DObsGrid(object):
         dshape = len(data.shape)
         if dshape == 3:
             d_avg = np.array([
-                data[i::nbin, i::nbin, :]
-                for i in range(nbin)
+                data[j::nbin, i::nbin, :]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape == 4:
             d_avg = np.array([
-                data[:, i::nbin, i::nbin, :]
-                for i in range(nbin)
+                data[:, j::nbin, i::nbin, :]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape ==5:
             d_avg = np.array([
-                data[:, :, i::nbin, i::nbin, :]
-                for i in range(nbin)
+                data[:, :, j::nbin, i::nbin, :]
+                for j in range(nbin) for i in range(nbin)
                 ])
         else:
             print('ERROR\tbinning_onsubgrid_layered: only Nd of data of 3-5 is now supported.')
@@ -1650,18 +1650,18 @@ class Nested3DObsGrid(object):
         dshape = len(data.shape)
         if dshape == 2:
             d_avg = np.array([
-                data[i::nbin, i::nbin]
-                for i in range(nbin)
+                data[j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape == 3:
             d_avg = np.array([
-                data[:, i::nbin, i::nbin]
-                for i in range(nbin)
+                data[:, j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape == 4:
             d_avg = np.array([
-                data[:, :, i::nbin, i::nbin]
-                for i in range(nbin)
+                data[:, :, j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         else:
             print('ERROR\tbinning_onsubgrid_xy: only Nd of data of 2-4 is now supported.')

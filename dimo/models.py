@@ -980,22 +980,23 @@ class SingleLayerDisk:
 @dataclass(slots=True)
 class SSDisk:
 
-    # intensity distribution
-    Ic: float = 1. # intensity at rc
-    rc: float = 1. # critical radius
-    beta: float = 0. # beta
-    gamma: float = 0. # gamma
+    Ic: float = 1.
+    rc: float = 1.
+    beta: float = 0.
+    gamma: float = 0.
     inc: float = 0.
     pa: float = 0.
-    z0: float = 0.
-    r0: float = 1.
-    hp: float = 0.
     ms: float = 0.
     vsys: float = 0.
-    delv: float = 0. # line width
+    dv: float = 0.
+    pdv: float = 0.
+
+    __inc_rad: float = np.radians(inc)
+    __pa_rad: float = np.radians(pa)
+
 
     def set_params(self, Ic = 0, rc = 0, beta = 0, gamma = 0, 
-        inc = 0, pa = 0, z0 = 0, r0 = 0, hp = 0, ms = 0, vsys = 0, delv = 0.):
+        inc = 0, pa = 0, ms = 0, vsys = 0, dv = 0, pdv = 0.):
         '''
 
         Parameters
@@ -1015,85 +1016,35 @@ class SSDisk:
         self.gamma = gamma
         self.inc = inc
         self.pa = pa
-        self.z0 = z0
-        self.r0 = r0
-        self.hp = hp
         self.ms = ms
         self.vsys = vsys
-        self.delv = delv
+        self.dv = dv
+        self.pdv = pdv
+
+        self.__inc_rad = np.radians(inc)
+        self.__pa_rad = np.radians(pa)
 
 
     def get_paramkeys(self):
-        return list(self.__annotations__.keys())
+        paramkeys = list(self.__annotations__.keys())
+        paramkeys = [i for i in paramkeys if i[0] != '_']
+        return paramkeys
 
 
-    def build(self, xx_sky, yy_sky, rin = 0.1):
+    def build(self, r, phi):
         '''
         Build a model given sky coordinates and return a info for making a image cube.
         '''
-        # parameters
-        _inc_rad = np.radians(self.inc)
-        _pa_rad = np.radians(self.pa)
-        _fz = lambda r, z0, r0, hp: z0*(r/r0)**hp
-        _dfz = lambda x, y, z0, h0, hp: 2. * y * 0.5 / np.sqrt(xp*xp + y*y) \
-        / r0 * z0 * hp * (np.sqrt(xp*xp + y*y)/r0)*(hp - 1.)
-        _zargs = [self.z0, self.r0, self.hp]
-
-        # deprojection
-        depr = sky_to_local(xx_sky.ravel(), yy_sky.ravel(), 
-        _inc_rad, _pa_rad + 0.5 * np.pi, _fz, _zargs,)
-        if type(depr) == int:
-            I_int = np.zeros(xx_sky.shape)
-            vlos  = np.zeros(xx_sky.shape)
-            return I_int, vlos
-        else:
-            xx, yy = depr
-            xx = xx.reshape(xx_sky.shape)
-            yy = yy.reshape(yy_sky.shape)
-
-        # local coordinates
-        rr = np.sqrt(xx * xx + yy * yy) # radius
-        rr[rr < rin] = np.nan
-        phph = np.arctan2(yy, xx) # azimuthal angle (rad)
-        zz = _fz(rr, *_zargs) # height
-
+        # intensity
+        I_int = ssdisk(r, self.Ic, self.rc, self.gamma, self.beta)
+        # velocity
         # take y-axis as the line of sight
-        vlos = vkep(rr * auTOcm, self.ms * Msun, zz * auTOcm) \
-        * np.cos(phph) * np.sin(_inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
-        I_int = ssdisk(rr, self.Ic, self.rc, self.gamma, self.beta)
+        vlos = vkep(r * auTOcm, self.ms * Msun) \
+        * np.cos(phi) * np.sin(self.__inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
 
-        return I_int, vlos
+        dv = self.dv * (r / 1.)**(-self.pdv)
 
-
-    def build_cube(self, xx, yy, v, beam = None, dist = 140.):
-        I_int, vlos = self.model.build(xx, yy)
-
-        ny, nx = xx.shape
-        nv = len(v)
-        delv = np.mean(v[1:] - v[:-1])
-        ve = np.hstack([v - delv * 0.5, v[-1] + 0.5 * delv])
-        I_cube = np.zeros((nv, ny, nx))
-        # making a cube
-        for i in range(nv):
-            vindx = np.where((ve[i] <= vlos) & (vlos < ve[i+1]))
-            I_cube[i,vindx[0], vindx[1]] = I_int[vindx]
-
-        #print('convolve beam..')
-        # Convolve beam if given
-        if beam is not None:
-            gaussbeam = gaussian2d(xx, yy, 1., 0., 0., 
-            beam[1] * dist / 2.35, beam[0] * dist / 2.35, beam[2], peak=True)
-
-            I_cube /= np.abs((xx[0,0] - xx[0,1])*(yy[1,0] - yy[0,0])) # per pixel to per arcsec^2
-            I_cube *= np.pi/(4.*np.log(2.)) * beam[0] * beam[1] # per arcsec^2 --> per beam
-
-            # beam convolution
-            I_cube = np.where(np.isnan(I_cube), 0., I_cube)
-            I_cube = convolve(I_cube, np.array([gaussbeam]), mode='same')
-        #print('done.')
-
-        # return intensity
-        return I_cube
+        return I_int, vlos, dv
 
 
 
