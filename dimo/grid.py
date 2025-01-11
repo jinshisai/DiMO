@@ -1,5 +1,6 @@
 # modules
 import numpy as np
+import math
 import matplotlib.pyplot as plt
 
 
@@ -7,7 +8,8 @@ import matplotlib.pyplot as plt
 class Nested2DGrid(object):
     """docstring for NestedGrid"""
     def __init__(self, x, y,
-        xlim, ylim, nsub, reslim = 5,):
+        xlim: list | None = None, ylim: list | None = None, 
+        nsub: list | None = None, reslim = 10,):
         super(Nested2DGrid, self).__init__()
         # save axes of the mother grid
         self.x = x
@@ -58,18 +60,6 @@ class Nested2DGrid(object):
             self.ylim = [ye[0], ye[-1]]
 
 
-        '''
-        if (_check := self.check_symmetry(precision))[0]:
-            pass
-        else:
-            print('ERROR\tNested2DGrid: Input grid must be symmetric but not.')
-            print('ERROR\tNested2DGrid: Condition.')
-            print('ERROR\tNested2DGrid: [xcent, ycent, dx, dy]')
-            print('ERROR\tNested2DGrid: ', _check[1])
-            return None
-        '''
-
-
     def get_nestinglim(self, reslim = 5):
         xlim = []
         ylim = []
@@ -101,10 +91,12 @@ class Nested2DGrid(object):
         Get grid on the l layer.
         '''
         _ny, _nx = self.ngrids[l]
+        partition = self.partition[l:l+2]
         # if it is not collapsed
-        if self.xnest[l].size == _nx * _ny:
-            xx = self.xnest[l].reshape(_ny, _nx)
-            yy = self.ynest[l].reshape(_ny, _nx)
+        if self.xnest[partition[0]:].size == _nx * _ny:
+            #partition = self.partition[l:l+2]
+            xx = self.xnest[partition[0]:].reshape(_nx, _ny)
+            yy = self.ynest[partition[0]:].reshape(_nx, _ny)
         else:
             # else
             x, y = self.xaxes[l], self.yaxes[l]
@@ -120,9 +112,13 @@ class Nested2DGrid(object):
         partition = [0]
         xnest = np.array([])
         ynest = np.array([])
+        dxnest = []
+        dynest = []
         for l in range(1, self.nlevels):
             # axes of the parental grid
             x, y = self.xaxes[l-1], self.yaxes[l-1]
+            dxnest.append(x[1] - x[0])
+            dynest.append(y[1] - y[0])
 
             # make childe grid
             ximin, ximax, yimin, yimax, x_sub, y_sub = \
@@ -135,7 +131,7 @@ class Nested2DGrid(object):
             # parental grid
             _nx, _ny = self.ngrids[l-1,:]
             #else:
-            xx, yy = np.meshgrid(x, y, indexing = 'ij')
+            xx, yy = np.meshgrid(x, y)
 
             # devide the upper grid into six sub-regions
             # Region 1:  x from 0 to ximin, all y
@@ -161,9 +157,39 @@ class Nested2DGrid(object):
         xx_sub, yy_sub = np.meshgrid(x_sub, y_sub)
         xnest = np.concatenate([xnest, xx_sub.ravel()]) # update
         ynest = np.concatenate([ynest, yy_sub.ravel()]) # update
+        dxnest.append(x_sub[1] - x_sub[0])
+        dynest.append(y_sub[1] - y_sub[0])
+        nd = xnest.size
+        partition.append(nd)
         self.xnest = xnest
         self.ynest = ynest
+        self.dxnest = dxnest
+        self.dynest = dynest
         self.partition = partition
+        self.nd = nd
+
+
+    def to_perpix(self, d):
+        ndim = len(d.shape)
+        if ndim == 1:
+            nd = d.size
+            d = d.reshape((1, nd))
+            shape = (nd)
+        elif ndim >= 2:
+            shape = d.shape
+            _n = math.prod(list(shape)[:-1])
+            d = d.reshape((_n, shape[-1]))
+
+        #print('to per pixel')
+        for l in range(self.nlevels):
+            partition = self.partition[l:l+2]
+            dx = self.dxnest[l]
+            dy = self.dynest[l]
+            #print('(l,dx,dy) = (%i, %.2e, %.2e)'%(l, dx, dy))
+            d[:,partition[0]:partition[1]] *= np.abs(dx*dy)
+
+        d = d.reshape(shape)
+        return d
 
 
     def collapse(self, d, upto = None):
@@ -175,7 +201,8 @@ class Nested2DGrid(object):
         d (list): List of data on the nested grid
         '''
         lmax = 0 if upto is None else upto
-        d_col = d[self.partition[-1]:] # starting from the inner most grid
+        #print(self.partition[-2]:self.partition[-1])
+        d_col = d[self.partition[-2]:self.partition[-1]] # starting from the inner most grid
         d_col = d_col.reshape(tuple(self.ngrids[-1,:]))
         for l in range(self.nlevels-1,lmax,-1):
             nsub = self.nsub[l-1]
@@ -190,7 +217,7 @@ class Nested2DGrid(object):
             d_col = np.full((nx, ny), np.nan)
 
             # insert collapsed data
-            d_col[ximin:ximax+1, yimin:yimax+1] = _d
+            d_col[yimin:yimax+1, ximin:ximax+1] = _d
 
             # fill upper layer data
             d_up = d[self.partition[l-1]:self.partition[l]]
@@ -216,6 +243,92 @@ class Nested2DGrid(object):
             d_col[yimax+1:, ximin:ximax+1] = \
             d_up[i0:i1].reshape(
                 (ny - yimax - 1, ximax + 1 - ximin))
+
+        return d_col
+
+
+    def high_dimensional_collapse(self, 
+        d, upto = None, fill = 'zero', collapse_mode = 'mean'):
+        ndim = len(d.shape)
+        if ndim == 1:
+            dcol = self.collapse(d, upto = upto)
+        elif ndim == 2:
+            dcol = self.collapse_extra_1d(d, 
+                upto = upto, fill = fill, 
+                collapse_mode = collapse_mode)
+        else:
+            print('ERROR\thigh_dimensional_collapse: currently only upto ndim=2 is supported.')
+            return 0
+        return dcol
+
+
+    def collapse_extra_1d(self, d, 
+        upto = None, fill = 'zero', collapse_mode = 'mean'):
+        '''
+        Collapse given data to the mother grid.
+
+        Parameters
+        ----------
+        d (list): List of data on the nested grid
+        '''
+        lmax = 0 if upto is None else upto
+        nv, _ = d.shape
+        d_col = d[:,self.partition[-2]:self.partition[-1]] # starting from the inner most grid
+        d_col = d_col.reshape((nv, self.ngrids[-1,:][0], self.ngrids[-1,:][1]))
+        for l in range(self.nlevels-1,lmax,-1):
+            nsub = self.nsub[l-1]
+            ximin, ximax = self.xinest[l*2:(l+1)*2]
+            yimin, yimax = self.yinest[l*2:(l+1)*2]
+            # collapse data on the inner grid
+            if (collapse_mode == 'mean') | (collapse_mode == 'sum'):
+                d_col[np.isnan(d_col)] = 0.
+                _d = self.binning_onsubgrid_layered(d_col, nsub, 
+                    binning_mode = collapse_mode)
+            elif collapse_mode == 'integrate':
+                #d_col *= np.abs(self.dxnest[l] * self.dynest[l]) # per pix
+                _d = self.binning_onsubgrid_layered(
+                    d_col, nsub, 
+                    binning_mode = 'sum')
+                _d *= np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1]) # per a^-2 with a of the pixel unit)
+                print('(l, Rarea_l-1,l) = (%i, %.2f)'%(l, np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1])))
+            #print(ximin, ximax, yimin, yimax)
+
+            # go upper layer
+            ny, nx = self.ngrids[l-1,:] # size of the upper layer
+            if fill == 'nan':
+                d_col = np.full((nv, ny, nx), np.nan)
+            elif fill == 'zero':
+                d_col = np.zeros((nv, ny, nx))
+            else:
+                d_col = np.full((nv, ny, nx), fill)
+
+            # insert collapsed data
+            d_col[:, yimin:yimax+1, ximin:ximax+1] = _d
+
+            # fill upper layer data
+            d_up = d[:, self.partition[l-1]:self.partition[l]]
+
+            # Region 1: x from zero to ximin, all y
+            d_col[:, :, :ximin] = \
+            d_up[:, :ximin * ny].reshape((nv, ny, ximin))
+            # Region 2: x from ximax to nx, all y and z
+            i0 = ximin * ny
+            i1 = i0 + (nx - ximax - 1) * ny
+            d_col[:, :, ximax+1:] = \
+            d_up[:, i0:i1].reshape(
+                (nv, ny, nx - ximax - 1))
+            # Region 3
+            i0 = i1
+            i1 = i0 + (ximax + 1 - ximin) * yimin
+            d_col[:, :yimin, ximin:ximax+1] = \
+            d_up[:, i0:i1].reshape(
+                (nv, yimin, ximax + 1 - ximin))
+            # Region 4
+            i0 = i1
+            i1 = i0 + (ximax + 1 - ximin) * (ny - yimax - 1)
+            d_col[:, yimax+1:, ximin:ximax+1] = \
+            d_up[:, i0:i1].reshape(
+                (nv, ny - yimax - 1, ximax + 1 - ximin))
 
         return d_col
 
@@ -263,33 +376,54 @@ class Nested2DGrid(object):
     def binning_onsubgrid(self, data):
         nbin = self.nsub
         d_avg = np.array([
-            data[i::nbin, i::nbin]
-            for i in range(nbin)
+            data[j::nbin, i::nbin]
+            for j in range(nbin) for i in range(nbin)
             ])
         return np.nanmean(d_avg, axis = 0)
 
 
-    def binning_onsubgrid_layered(self, data, nbin):
+    def binning_onsubgrid_layered(self, 
+        data, nbin, binning_mode = 'mean'):
         dshape = len(data.shape)
         if dshape == 2:
             d_avg = np.array([
-                data[i::nbin, i::nbin]
-                for i in range(nbin)
+                data[j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape == 3:
             d_avg = np.array([
-                data[:, i::nbin, i::nbin]
-                for i in range(nbin)
+                data[:, j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape ==4:
             d_avg = np.array([
-                data[:, :, i::nbin, i::nbin]
-                for i in range(nbin)
+                data[:, :, j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         else:
             print('ERROR\tbinning_onsubgrid_layered: only Nd of data of 3-5 is now supported.')
             return 0
-        return np.nanmean(d_avg, axis = 0)
+
+        if binning_mode == 'mean':
+            return np.nanmean(d_avg, axis = 0)
+        elif binning_mode == 'sum':
+            return np.nansum(d_avg, axis = 0)
+        else:
+            print('ERROR\binning_onsubgrid_layered: binning_mode must be mean or sum.')
+            return 0
+
+
+    def gridinfo(self, units = ['au', 'au']):
+        ux, uy = units
+        print('Nesting level: %i'%self.nlevels)
+        print('Resolutions:')
+        for l in range(self.nlevels):
+            dx = self.xaxes[l][1] - self.xaxes[l][0]
+            dy = self.yaxes[l][1] - self.yaxes[l][0]
+            print('   l=%i: (dx, dy) = (%.2e %s, %.2e %s)'%(l, dx, ux, dy, uy))
+            print('      : (xlim, ylim) = (%.2e to %.2e %s, %.2e to %.2e %s)'%(
+                self.xlim[l][0], self.xlim[l][1], ux,
+                self.ylim[l][0], self.ylim[l][1], uy))
 
 
 
@@ -315,6 +449,52 @@ class Nested2DGrid(object):
         yi0 = int((self.ny - ny_resub / self.nsub) * 0.5)
         #print(nx_resub / self.nsub, self.nx - xi0 - xi0)
         return xi, yi, xi0, yi0
+
+
+    def visualize_grid(self, d, 
+        ax = None, vmin = None, vmax = None,
+        showfig = False, cmap = 'viridis', outname = None,
+        savefig = False):
+        if ax is None:
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+
+        if vmax is None: vmax = np.nanmax(d)
+        if vmin is None: vmin = np.nanmin(d)
+        # from upper to lower
+        for l in range(self.nlevels):
+            nx, ny = self.ngrids[l,:]
+            xmin, xmax = self.xlim[l]
+            ymin, ymax = self.ylim[l]
+
+            d_plt = self.collapse(
+                d, upto = l)
+
+            # hide parental layer
+            if l <= self.nlevels-2:
+                ximin, ximax = self.xinest[(l+1)*2:(l+2)*2]
+                yimin, yimax = self.xinest[(l+1)*2:(l+2)*2]
+                d_plt[yimin:yimax+1, ximin:ximax+1] = np.nan
+
+            #ax.imshow(d_plt, extent = (zmin, zmax, xmin, xmax),
+            #    alpha = 1., vmax = vmax, vmin = vmin, origin = 'upper', cmap = cmap)
+
+            _xx, _yy = self.get_grid(l)
+            im = ax.pcolormesh(_xx, _yy, d_plt, 
+                alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
+            rect = plt.Rectangle((xmin, ymin), 
+                xmax - xmin, ymax - ymin, edgecolor = 'white', facecolor = "none",
+                linewidth = 0.5, ls = '--')
+            ax.add_patch(rect)
+
+        ax.set_xlim(self.xlim[0])
+        ax.set_ylim(self.ylim[0])
+        plt.colorbar(im, ax = ax)
+
+        if showfig: plt.show()
+        if savefig: plt.savefig(outname, transparent = True, dpi = 300)
+        return ax
+
 
 
 
