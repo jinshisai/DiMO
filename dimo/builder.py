@@ -3,21 +3,15 @@ import numpy as np
 import matplotlib.pyplot as plt
 import sys
 import copy
-from scipy.interpolate import griddata
-from scipy.optimize import root, minimize
-from scipy.signal import convolve
+from scipy.interpolate import griddata, interpn
+from scipy.interpolate import RegularGridInterpolator
 from astropy import constants, units
-import dataclasses
-from dataclasses import dataclass
-import time
 
-from .funcs import beam_convolution, gaussian2d, glnprof_conv
-from .grid import Nested3DObsGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
-#from .linecube import tocube, solve_3LRT, waverage_to_cube, integrate_to_cube, solve_box3LRT
+from .funcs import beam_convolution, gaussian2d
+from .grid import Nested2DGrid
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
-from .fast_grid import fast_3d_collapse
 
 
 ### constants
@@ -38,207 +32,61 @@ auTOcm = units.au.to('cm') # 1 au (cm)
 np.seterr(divide='ignore')
 
 
-class Builder_dev(object):
+
+class Builder3D(object):
     '''
     A disk model with Two Thick Layers (TTL) with a thin dust layer.
 
     '''
 
-    def __init__(self, axes: list, model,
-        xlim: list | None = None, ylim: list | None = None, zlim: list | None = None,
-        nsub: list | None = None, zstrech: list | None = None, reslim: float = 10,
-        adoptive_zaxis: bool = True, cosi_lim: float = 0.5, 
-        beam: list | None = None, line: str | None = None, iline: int | None = None,
-        Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,
-        coordinate = 'sph/sym'):
-        '''
-        Set up model grid and initialize model.
-
-        Parameters
-        ----------
-        x, y, z (3D numpy ndarrays): Three dimensional coordinates aligned plane of sky (au).
-        '''
-        super(Builder, self).__init__()
-
-        if coordinate_type == 'sph/sym':
-            self.build_grid(self, axes)
-
-        self.model = model
-
-
-    def build_grid(self, axes):
-        r, t = axes
-        self.r = r
-        self.t = t
-
-        rr, tt = np.meshgrid(r, t, indexing = 'ij')
-        zz = rr * np.cos(tt)
-        self.rs = rr.ravel()
-        self.zs = zz.ravel()
-        self.ts = tt.ravel()
-        self.Rs = (rr * np.sin(tt)).ravel()
-
-
-    def build_cube(self, 
-        Tcmb = 2.73, f0 = 230., 
-        dist = 140., dv_mode = 'total', 
-        contsub = True, return_Ttau = False):
-        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(rin = rin, dv_mode = dv_mode)
-
-        # dust
-        T_d = self.grid2D.collapse(T_d)
-        tau_d = self.grid2D.collapse(tau_d)
-
-        # To cube
-        #  calculate column density and density-weighted temperature 
-        #  of each gas layer at every velocity channel.
-        if (self.dv > 0.) | (dv_mode == 'thermal'):
-            # line profile function
-            lnprofs = spectra.glnprof_series(self.v, vlos, dv)
-
-            # get nv
-            #start = time.time()
-            nv_cube = linecube.to_xyzv(
-                np.array([n_gf, n_gr]), lnprofs)
-            #end = time.time()
-            #print('to_xyzv takes %.2f'%(end-start))
-
-            # collapse
-            #start = time.time()
-            T_g = self.grid.collapse(T_g)
-            nv_gf = self.grid.high_dimensional_collapse(nv_cube[0,:,:], fill = 'zero')
-            nv_gr = self.grid.high_dimensional_collapse(nv_cube[1,:,:], fill = 'zero')
-            #end = time.time()
-            #print('collapsing takes %.2f'%(end-start))
-
-            # to cube
-            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
-                transfer.Tnv_to_cube(
-                T_g, nv_gf, nv_gr,
-                self.grid.dz * auTOcm,
-                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid),
-                (0,1,3,2,))
-        else:
-            Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
-            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
-            (0,1,3,2,))
-
-        Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
-        Tv_gr = Tv_gr.clip(1., None)
-
-
-        # density to tau
-        #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
-        #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
-        #if (self.line is not None) * (self.iline is not None):
-        #    tau_v_gf = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gf, Tv_gf, delv = None, grid_approx = True)
-        #    tau_v_gr = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gr, Tv_gr, delv = None, grid_approx = True)
-        #else:
-        #    # ignore temperature effect on conversion from column density to tau
-        #    tau_v_gf = Nv_gf
-        #    tau_v_gr = Nv_gr
-        #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
-
-
-        if return_Ttau:
-            return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
-
-        # radiative transfer
-        _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
-            dist = dist, au = True)
-        #_Bv = lambda T, v: Bv(T, v)
-        _Bv_cmb = _Bv(Tcmb, f0)
-        _Bv_gf  = _Bv(Tv_gf, f0)
-        _Bv_gr  = _Bv(Tv_gr, f0)
-        _Bv_d   = _Bv(T_d, f0)
-        Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
-            tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
-
-        if contsub == False:
-            Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
-            Iv_d = np.tile(Iv_d, (self.nv,1,1,))
-            Iv += Iv_d # add continuum back
-
-        # Convolve beam if given
-        #print('I_v_nobeam max: %13.2e'%(np.nanmax(Iv)))
-        if self.beam is not None:
-            Iv = beam_convolution(self.grid2D.xx.copy(), self.grid2D.yy.copy(), Iv, 
-                self.beam, self.gaussbeam)
-
-        #print('I_v max: %13.2e'%(np.nanmax(Iv)))
-        return Iv
-
-
-
-
-    def define_beam(self, beam):
-        '''
-        Parameters
-        ----------
-         beam (list): Observational beam. Must be given in a format of 
-                      [major (au), minor (au), pa (deg)].
-        '''
-        # save beam info
-        self.beam = beam
-        # define Gaussian beam
-        nx, ny = self.grid2D.nx, self.grid2D.ny
-        gaussbeam = gaussian2d(self.grid2D.xx.copy(), self.grid2D.yy.copy(), 1., 
-            self.grid2D.xx[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
-        self.grid2D.yy[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
-        beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
-        gaussbeam /= np.sum(gaussbeam)
-        self.gaussbeam = gaussbeam
-
-
-
-class Builder(object):
-    """docstring for Observer"""
-    def __init__(self, x, y, z, v, model,
+    def __init__(self, model,
+        axes_model: list, axes_sky: list, 
         xlim: list | None = None, ylim: list | None = None,
-        nsub: list | None = None, zstrech: list | None = None, 
-        reslim: float = 10, rin: float = 1.,
-        adoptive_zaxis: bool = True, cosi_lim: float = 0.5, 
-        beam: list | None = None, line: str | None = None, iline: int | None = None,
+        nsub: list | None = None, reslim: float = 10,
+        beam: list | None = None, dv_mode = 'total',
+        coordinate_type = 'spherical', 
+        line: str | None = None, iline: int | None = None,
         Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,):
         '''
         Set up model grid and initialize model.
 
         Parameters
         ----------
-        x, y, z (3D numpy ndarrays): Three dimensional coordinates aligned plane of sky (au).
+        axes (list of axes): Three dimensional coordinates aligned plane of sky (au).
         '''
-        super(Builder, self).__init__()
-
-        # make observer grid
-        self.nx, self.ny, self.nz = len(x), len(y), len(z)
-        self.grid = Nested3DObsGrid(
-        x, y, z, xlim, ylim, nsub, zstrech, reslim, preserve_z = True) # Plane of sky coordinates
-        self.grid2D = Nested2DGrid(x, y, xlim, ylim, nsub, reslim)
-        # Plane of sky coordinates
-        self.xs = self.grid.xnest
-        self.ys = self.grid.ynest
-        self.zs = self.grid.znest
-        # disk-local coordinates
-        self.xps = None
-        self.yps = None
-        self.zps = None
-        self.Rs = None # R in cylindarical coordinates
-        self.phs = None # phi in cylindarical coordinates
-        # dust layer
-        self.Rmid = None
-        self.rin = rin
-
-        # velocity
-        self.nv = len(v)
-        self.delv = np.mean(v[1:] - v[:-1]) # km / s
-        self.v = v
-        self.ve = np.hstack([v - self.delv * 0.5, v[-1] + 0.5 * self.delv])
+        super(Builder3D, self).__init__()
 
         # model
         self.model = model()
+        self._model = model
 
+        # model grid
+        if coordinate_type == 'spherical':
+            self.build_polar_grid(axes_model)
+
+        # sky grid
+        self.reslim = reslim
+        self.nsub = nsub
+        x, y, v  = axes_sky
+        self.v = v
+        self.nv = len(v)
+        self.nx = len(x)
+        self.ny = len(y)
+        self.build_sky_grid(x, y, xlim, ylim, nsub, reslim)
+
+        # beam
+        if beam is not None:
+            self.define_beam(beam)
+        else:
+            self.beam = beam
+
+
+        if line is not None: self.set_line(
+            line, iline, Tmin = Tmin, Tmax = Tmax, nTex = nTex)
+
+
+    def set_line(self, line, iline, 
+        Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,):
         # line
         self.line = line
         self.iline = iline
@@ -250,12 +98,6 @@ class Builder(object):
             self.trans, self.freq, self.Aul, self.gu, self.gl, self.Eu, self.El = \
             self.mol.moldata[line].params_trans(iline)
 
-        # beam
-        if beam is not None:
-            self.define_beam(beam)
-        else:
-            self.beam = beam
-
 
     def define_beam(self, beam):
         '''
@@ -267,54 +109,49 @@ class Builder(object):
         # save beam info
         self.beam = beam
         # define Gaussian beam
-        nx, ny = self.grid2D.nx, self.grid2D.ny
-        gaussbeam = gaussian2d(self.grid2D.xx.copy(), self.grid2D.yy.copy(), 1., 
-            self.grid2D.xx[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
-        self.grid2D.yy[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
-        beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
+        nx, ny = self.skygrid.nx, self.skygrid.ny
+        xx = self.skygrid.xx.copy()
+        yy = self.skygrid.yy.copy()
+        gaussbeam = gaussian2d(xx, yy, 1., 
+            xx[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
+            yy[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
+            beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
         gaussbeam /= np.sum(gaussbeam)
         self.gaussbeam = gaussbeam
 
 
-    def deproject_grid(self, 
-        adoptive_zaxis = True, 
-        cosi_lim = 0.5):
-        '''
-        Transfer the plane of sky coordinates to disk local coordinates.
-        '''
-        xp = self.xs
-        yp = self.ys
-        zp = self.zs
-        # rotate by PA
-        x, y = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
-        # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
-        # adoptive z axis
-        if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > cosi_lim):
-            # center origin of z axis in the disk midplane
-            zoffset = - np.tan(self._inc_rad) * y # zp_mid(xp, yp)
-            self.zoffset = zoffset
-            _zp = zp + zoffset # shift z center
-            x, y, z = xrot(x, y, _zp, self._inc_rad) # rot = - (-inc)
-        else:
-            x, y, z = xrot(x, y, zp, self._inc_rad) # rot = - (-inc)
-            self.zoffset = np.zeros(x.size)
+    def build_sky_grid(self, x, y, xlim = None, ylim = None, nsub = None, reslim = 10):
+        self.skygrid = Nested2DGrid(x, y, xlim, ylim, nsub, reslim)
 
-        self.xps = x
-        self.yps = y
-        self.zps = z
 
-        # cylindarical coordinates
-        Rs = np.sqrt(x * x + y * y) # radius
-        Rs[Rs < self.rin] = np.nan
-        self.Rs = Rs # radius
-        self.phs = np.arctan2(y, x) # azimuthal angle (rad)
+    def build_spherical_grid(self, axes):
+        r, theta, phi = axes
+        self.r = r
+        self.theta = theta
+        self.phi = phi
+        self.nr = len(r)
+        self.ntheta = len(theta)
+        self.nphi = len(phi)
 
-        # for dust layer
-        x, y = rot2d(self.grid2D.xnest - self.dx0, 
-            self.grid2D.ynest - self.dy0, self._pa_rad - 0.5 * np.pi) # in 2D
-        y /= np.cos(self._inc_rad)
-        self.Rmid = np.sqrt(x * x + y * y) # radius
-        self.adoptive_zaxis = adoptive_zaxis
+        rr, tt, phph = np.meshgrid(r, theta, phi, indexing = 'ij')
+        zz = rr * np.cos(tt)
+        RR = rr * np.sin(tt)
+
+        # spherical
+        self.rs = rr.ravel()
+        self.ts = tt.ravel()
+        self.phis = phph.ravel()
+        # Cylinderical
+        self.Rs = RR.ravel()
+        # Cartesian
+        self.xs = self.Rs * np.cos(self.phis)
+        self.ys = self.Rs * np.sin(self.phis)
+        self.zs = zz.ravel()
+
+        # 2D grid for dust layer
+        #rr_mid, phph_mid = np.meshgrid(r, phi, indexing = 'ij')
+        self.Rs_mid = rr[:,0,:].ravel()
+        self.phis_mid = phph[:,0,:].ravel()
 
 
     def set_model(self, params):
@@ -323,53 +160,106 @@ class Builder(object):
         self.dx0 = params['dx0']
         self.dy0 = params['dy0']
         self.inc = params['inc']
-        self._inc_rad = np.radians(self.inc)
+        self.__inc_rad = np.radians(self.inc)
         self.pa = params['pa']
-        self._pa_rad = np.radians(self.pa)
+        self.__pa_rad = np.radians(self.pa)
+        self.__side = np.sign(
+        np.cos(self.__inc_rad)) # cos(-i) = cos(i)
 
 
-    def build_model(self, dv_mode):
-        T_g, n_g, vlos, dv, T_d, tau_d = self.model.build(
-            self.Rs, self.phs, self.zps, self.Rmid,
-            dv_mode = dv_mode, mmol = self.mmol)
-        return T_g, n_g, vlos, dv, T_d, tau_d
+    def skygrid_info(self):
+        self.skygrid.gridinfo()
 
 
-    def build_cube(self, 
-        Tcmb = 2.73, f0 = 230., 
-        dist = 140., dv_mode = 'total', 
-        contsub = True, return_Ttau = False):
-        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode = dv_mode)
+    def build_model(self):
+        return self.model.build(self.Rs, self.phis, self.zs, self.Rs_mid,
+            dv_mode = self.dv_mode, collapse = False, mmol = self.mmol)
 
-        # dust
-        T_d = self.grid2D.collapse(T_d)
-        tau_d = self.grid2D.collapse(tau_d)
 
-        # replace nan
-        #T_g[np.isnan(T_g)] = 0.
-        #n_g[np.isnan(n_g)] = 0.
+    def project_grid(self):
+        # rotate around x-axis
+        x_rot, y_rot, z_rot = xrot(
+            self.xs, 
+            self.ys, 
+            self.zs, - self._inc_rad)
 
-        # To cube
-        #  calculate column density and density-weighted temperature 
-        #  of each gas layer at every velocity channel.
+        # rotate by position angle around z-axis 
+        rot_ang = self.__pa_rad + 0.5 * np.pi
+        x_rot = x * np.cos(rot_ang) + y_rot * np.sin(rot_ang)
+        x_rot -= self.dx0
+        y_rot = -x * np.sin(rot_ang) + y_rot * np.cos(rot_ang)
+        y_rot -= self.dy0
+
+        #self._x = x
+        #self._y = y
+        self.xrot = x_rot
+        self.yrot = y_rot
+        self.zrot = z_rot
+
+
+    def project_quantity(self, q):
+        # projection
+        q_proj = griddata(
+            (self.xrot, self.yrot), q, (self.skygrid.xnest, self.skygrid.ynest),
+            method = 'linear', fill_value = 0.)
+        #q_proj = interpn((self.xrot, self.yrot), 
+        #    q, np.array([self.skygrid.xnest, self.skygrid.ynest]),
+        #    bounds_error = False, fill_value = 0.)
+        return q_proj
+
+
+    def project_quantities(self, qs: list or np.ndarray):
+        qs_proj = []
+        # projection
+        for q in qs:
+            q_proj = griddata(
+                (self.xrot, self.yrot), q, 
+                (self.skygrid.xnest, self.skygrid.ynest),
+                method = 'linear', fill_value = 0.)
+            qs_proj.append(q_proj)
+        return qs_proj
+
+
+    def build_cube(self):
+        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model()
+        self.project_grid()
+
+        ''' new version; line profile first
+        lnprofs = spectra.glnprof_series(self.v, vlos, dv) # x,y,v
+        lnprofs[np.isnan(lnprofs)] = 0.
+        _Iv = np.tile(I_int, (self.nv, 1,)) * lnprofs
+
+        Iv = np.array([
+            self.project_quantity(_Iv[i,:]) for i in range(self.nv)
+            ])
+        '''
+
+        #'''old version; projection first
+        T_proj, n_proj, v_proj, dv_proj = \
+        self.project_quantities([T_g, n_g, vlos, dv])
+
+        # side
+        n_gf = n_proj.copy()
+        n_gr = n_proj.copy()
+        if self.__side > 0.:
+            # positive z is fore side
+            n_gf[self.zs < 0.] = 0.
+            n_gr[self.zs > 0.] = 0.
+        else:
+            # positive z is rear side
+            n_gf[self.zs > 0.] = 0.
+            n_gr[self.zs < 0.] = 0.
+
+
         if (self.model.dv > 0.) | (dv_mode == 'thermal'):
             # line profile function
-            lnprofs = spectra.glnprof_series(self.v, vlos.ravel(), dv.ravel())
+            lnprofs = spectra.glnprof_series(self.v, v_proj, dv_proj) # x,y,v
 
-            # get nv
-            #start = time.time()
-            nv_cube = linecube.to_xyzv(
-                np.array([n_g.ravel()]), lnprofs)
-            nv_g = nv_cube[0].reshape((self.nv, self.grid.nxy, self.nz))
-            #end = time.time()
-            #print('to_xyzv takes %.2f'%(end-start))
-
-            # collapse
-            #start = time.time()
-            #T_g = self.grid.collapse(T_g)
-            #nv_g = self.grid.high_dimensional_collapse(nv_cube[0,:,:], fill = 'zero')
-            #end = time.time()
-            #print('collapsing takes %.2f'%(end-start))
+            # for each v
+            for vi in self.v:
+                nv_gf = np.trapz(
+                    n_gf, self.zrot, axis = 
+                    )
 
             # to cube
             Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnv_to_cube(
@@ -392,126 +282,204 @@ class Builder(object):
         Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
         Tv_gr = Tv_gr.clip(1., None)
 
+        # line profile function
+        lnprofs = spectra.glnprof_series(self.v, v_proj, dv_proj) # x,y,v
+        Iv = np.tile(I_proj, (self.nv, 1,)) * lnprofs
+        #'''
 
-        # density to tau
-        #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
-        #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
-        #if (self.line is not None) * (self.iline is not None):
-        #    tau_v_gf = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gf, Tv_gf, delv = None, grid_approx = True)
-        #    tau_v_gr = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gr, Tv_gr, delv = None, grid_approx = True)
-        #else:
-        #    # ignore temperature effect on conversion from column density to tau
-        #    tau_v_gf = Nv_gf
-        #    tau_v_gr = Nv_gr
-        #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
+        # Integrate density along z-axis
+    data_cube[i, :, :] = np.trapz(density_obs, Z_rot, axis=0)
 
+        # collapse
+        Iv = self.skygrid.high_dimensional_collapse(Iv, 
+            fill = 'zero',
+            collapse_mode = 'mean')
 
-        if return_Ttau:
-            return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
-
-        # radiative transfer
-        _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
-            dist = dist, au = True)
-        #_Bv = lambda T, v: Bv(T, v)
-        _Bv_cmb = _Bv(Tcmb, f0)
-        _Bv_gf  = _Bv(Tv_gf, f0)
-        _Bv_gr  = _Bv(Tv_gr, f0)
-        _Bv_d   = _Bv(T_d, f0)
-        Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
-            tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
-
-        if contsub == False:
-            Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
-            Iv_d = np.tile(Iv_d, (self.nv,1,1,))
-            Iv += Iv_d # add continuum back
 
         # Convolve beam if given
-        #print('I_v_nobeam max: %13.2e'%(np.nanmax(Iv)))
         if self.beam is not None:
-            Iv = beam_convolution(self.grid2D.xx.copy(), self.grid2D.yy.copy(), Iv, 
+            Iv = beam_convolution(
+                self.skygrid.xx.copy(), 
+                self.skygrid.yy.copy(), Iv, 
                 self.beam, self.gaussbeam)
 
-        #print('I_v max: %13.2e'%(np.nanmax(Iv)))
         return Iv
 
 
-    def show_model_sideview(self, 
-        dv_mode='total', cmap = 'viridis', 
-        savefig = False, showfig = True, 
-        outname = 'model_sideview', vmax = 0.90, vmin = 0.):
-        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode=dv_mode)
-        #n_g = self.grid.collapse(n_g)
+class Builder(object):
+    '''
+    A disk model with Two Thick Layers (TTL) with a thin dust layer.
 
-        vmax *= np.nanmax(n_g)
+    '''
 
-        #fig = plt.figure()
-        #ax = fig.add_subplot(111)
-        fig, axes = plt.subplots(1,2)
-        ax1, ax2 = axes
-
-
-        # from upper to lower
-        _grid = copy.deepcopy(self.grid)
-        for l in range(_grid.nlevels):
-            nx, ny, nz = _grid.ngrids[l,:]
-            xmin, xmax = _grid.xlim[l]
-            zmin, zmax = _grid.zlim[l]
-
-            d_plt = _grid.collapse(n_g, upto = l)
-
-            # hide parental layer
-            if l <= _grid.nlevels-2:
-                ximin, ximax = _grid.xinest[(l+1)*2:(l+2)*2]
-                yimin, yimax = _grid.yinest[(l+1)*2:(l+2)*2]
-                d_plt[ximin:ximax+1,yimin:yimax+1] = np.nan
-
-            #if self.adoptive_zaxis:
-            #    if _grid.preserve_z:
-            #        zoff = self.zoffset[_grid.xypartition[l]:_grid.xypartition[l+1],:]
-            #    else:
-            #        zoff = self.zoffset[_grid.partition[l]:_grid.partition[l+1]]
-
-            #ax1.imshow(d_plt, extent = (zmin + zoff, zmax + zoff, xmin, xmax),
-            #    alpha = 1., vmax = vmax, vmin = vmin, origin = 'upper', cmap = cmap)
-            #print(l, zoff.shape)
-            _xx, _yy, _zz = _grid.get_grid(l)
-
-            if self.adoptive_zaxis:
-                zoff = _grid.collapse(self.zoffset, upto = l)
-                _zz += zoff
-
-            ax1.pcolormesh(_zz[:, ny//2, :], _xx[:, ny//2, :], d_plt[:, ny//2, :], 
-                alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
-            ax2.pcolormesh(_zz[nx//2, :, :], _yy[nx//2, :, :], d_plt[nx//2, :, :], 
-                alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
-            #rect = plt.Rectangle((zmin, xmin), 
-            #    zmax - zmin, xmax - xmin, edgecolor = 'white', facecolor = "none",
-            #    linewidth = 0.5, ls = '--')
-            #ax1.add_patch(rect)
-
-        #ax1.set_xlim(_grid.zlim[0][0], _grid.zlim[0][1])
-        ax1.set_ylim(_grid.xlim[0])
-        ax2.set_ylim(_grid.ylim[0])
-
-        ax1.set_ylabel(r'$x$ (au)')
-        ax1.set_xlabel(r'$z$ (au)')
-        ax2.set_ylabel(r'$y$ (au)')
-
-        fig.tight_layout()
-
+    def __init__(self, model,
+        axes_model: list, axes_sky: list, 
+        xlim: list | None = None, ylim: list | None = None,
+        nsub: list | None = None, reslim: float = 10,
+        beam: list | None = None,
+        coordinate_type = 'polar'):
         '''
-        _grid = copy.deepcopy(self.grid)
-        if self.adoptive_zaxis:
-            _grid.znest += self.zoffset
-        _grid.visualize_xz(n_g, 
-            ax = ax1, vmax = np.nanmax(n_g) * 0.01, cmap = cmap)
+        Set up model grid and initialize model.
+
+        Parameters
+        ----------
+        axes (list of axes): Three dimensional coordinates aligned plane of sky (au).
+        '''
+        super(Builder, self).__init__()
+
+        # model
+        self.model = model()
+        self._model = model
+
+        # model grid
+        if coordinate_type == 'polar':
+            self.build_polar_grid(axes_model)
+
+        # sky grid
+        self.reslim = reslim
+        self.nsub = nsub
+        x, y, v  = axes_sky
+        self.v = v
+        self.nv = len(v)
+        self.nx = len(x)
+        self.ny = len(y)
+        self.build_sky_grid(x, y, xlim, ylim, nsub, reslim)
+
+        # beam
+        if beam is not None:
+            self.define_beam(beam)
+        else:
+            self.beam = beam
+
+
+    def define_beam(self, beam):
+        '''
+        Parameters
+        ----------
+         beam (list): Observational beam. Must be given in a format of 
+                      [major (au), minor (au), pa (deg)].
+        '''
+        # save beam info
+        self.beam = beam
+        # define Gaussian beam
+        nx, ny = self.skygrid.nx, self.skygrid.ny
+        xx = self.skygrid.xx.copy()
+        yy = self.skygrid.yy.copy()
+        gaussbeam = gaussian2d(xx, yy, 1., 
+            xx[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
+            yy[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
+            beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
+        gaussbeam /= np.sum(gaussbeam)
+        self.gaussbeam = gaussbeam
+
+
+    def build_sky_grid(self, x, y, xlim = None, ylim = None, nsub = None, reslim = 10):
+        self.skygrid = Nested2DGrid(x, y, xlim, ylim, nsub, reslim)
+
+
+    def build_polar_grid(self, axes):
+        r, phi = axes
+        self.r = r
+        self.phi = phi
+        self.nr = len(r)
+        self.nphi = len(phi)
+
+        rr, phph = np.meshgrid(r, phi, indexing = 'ij')
+        self.rs = rr.ravel()
+        self.phis = phph.ravel()
+
+
+    def set_model(self, params):
+        self.model.set_params(**params)
+        # geometric parameters
+        #self.dx0 = params['dx0']
+        #self.dy0 = params['dy0']
+        self.inc = params['inc']
+        self.__inc_rad = np.radians(self.inc)
+        self.pa = params['pa']
+        self.__pa_rad = np.radians(self.pa)
+
+
+    def skygrid_info(self):
+        self.skygrid.gridinfo()
+
+
+    def build_model(self):
+        I_int, vlos, dv = self.model.build(self.rs, self.phis)
+        return I_int, vlos, dv
+
+
+    def project_grid(self):
+        # Convert spherical to Cartesian coordinates
+        x = self.rs * np.cos(self.phis)
+        y = self.rs * np.sin(self.phis)
+
+        # Apply inclination and position angle
+        y_rot = y * np.cos(self.__inc_rad)
+        rot_ang = self.__pa_rad + 0.5 * np.pi
+        x_rot = x * np.cos(rot_ang) + y_rot * np.sin(rot_ang)
+        y_rot = -x * np.sin(rot_ang) + y_rot * np.cos(rot_ang)
+
+        #self._x = x
+        #self._y = y
+        self.xrot = x_rot
+        self.yrot = y_rot
+
+
+    def project_quantity(self, q):
+        # interpolator
+        #interpolator = RegularGridInterpolator(
+        #    (self.xrot, self.yrot), q, bounds_error=False, fill_value=0)
+        # projection
+        #q_proj = interp_int((self.skygrid.xnest, self.skygrid.ynest))
+        q_proj = griddata(
+            (self.xrot, self.yrot), q, (self.skygrid.xnest, self.skygrid.ynest),
+            method = 'linear', fill_value = 0.)
+        #q_proj = interpn((self.xrot, self.yrot), 
+        #    q, np.array([self.skygrid.xnest, self.skygrid.ynest]),
+        #    bounds_error = False, fill_value = 0.)
+        return q_proj
+
+
+
+    def build_cube(self):
+        I_int, vlos, dv = self.build_model()
+        self.project_grid()
+
+        ''' new version; line profile first
+        lnprofs = spectra.glnprof_series(self.v, vlos, dv) # x,y,v
+        lnprofs[np.isnan(lnprofs)] = 0.
+        _Iv = np.tile(I_int, (self.nv, 1,)) * lnprofs
+
+        Iv = np.array([
+            self.project_quantity(_Iv[i,:]) for i in range(self.nv)
+            ])
         '''
 
-        if savefig: fig.savefig(outname + '.png', dpi = 300, transparent = True)
-        if showfig: plt.show()
-        plt.close()
+        #'''old version; projection first
+        I_proj = self.project_quantity(I_int)
+        v_proj = self.project_quantity(vlos)
+        dv_proj = self.project_quantity(dv)
+
+        # line profile function
+        lnprofs = spectra.glnprof_series(self.v, v_proj, dv_proj) # x,y,v
+        Iv = np.tile(I_proj, (self.nv, 1,)) * lnprofs
+        #'''
+
+        # collapse
+        Iv = self.skygrid.high_dimensional_collapse(Iv, 
+            fill = 'zero',
+            collapse_mode = 'mean')
+
+
+        # Convolve beam if given
+        if self.beam is not None:
+            Iv = beam_convolution(
+                self.skygrid.xx.copy(), 
+                self.skygrid.yy.copy(), Iv, 
+                self.beam, self.gaussbeam)
+
+        return Iv
 
 
 def rot2d(x, y, ang):
