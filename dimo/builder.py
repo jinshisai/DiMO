@@ -14,7 +14,7 @@ import time
 from .funcs import beam_convolution, gaussian2d, glnprof_conv
 from .grid import Nested3DObsGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
 #from .linecube import tocube, solve_3LRT, waverage_to_cube, integrate_to_cube, solve_box3LRT
-from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
+from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube, solve_MLRT_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
 from .fast_grid import fast_3d_collapse
@@ -156,8 +156,8 @@ class Builder(object):
         self.phs = np.arctan2(y, x) # azimuthal angle (rad)
 
         # for dust layer
-        x, y = rot2d(self.grid2D.xnest - self.dx0, 
-            self.grid2D.ynest - self.dy0, self._pa_rad - 0.5 * np.pi) # in 2D
+        x, y = rot2d(self.grid.xnest[:,0] - self.dx0, 
+            self.grid.ynest[:,0] - self.dy0, self._pa_rad - 0.5 * np.pi) # in 2D
         y /= np.cos(self._inc_rad)
         self.Rmid = np.sqrt(x * x + y * y) # radius
         self.adoptive_zaxis = adoptive_zaxis
@@ -169,9 +169,11 @@ class Builder(object):
         self.dx0 = params['dx0']
         self.dy0 = params['dy0']
         self.inc = params['inc']
-        self._inc_rad = np.radians(self.inc)
+        _inc_rad = np.radians(self.inc)
+        self._inc_rad = _inc_rad
         self.pa = params['pa']
         self._pa_rad = np.radians(self.pa)
+        self.side = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
 
 
     def build_model(self, dv_mode):
@@ -196,7 +198,8 @@ class Builder(object):
         #  of each gas layer at every velocity channel.
         if (self.model.dv > 0.) | (dv_mode == 'thermal'):
             # line profile function
-            lnprofs = spectra.glnprof_series(self.v, vlos.ravel(), dv.ravel())
+            lnprofs = spectra.glnprof_series(self.v, 
+            vlos.ravel(), dv.ravel(), unit_scale = 1.e-5)
 
             # get nv
             #start = time.time()
@@ -205,15 +208,22 @@ class Builder(object):
             nv_g = nv_cube[0].reshape((self.nv, self.grid.nxy, self.nz))
 
             # to cube
-            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnv_to_cube(
-                T_g, nv_g, self.grid.znest,
-                self.grid.dznest * auTOcm,
-                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+            if self.side == 1:
+                Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnv_to_cube(
+                    T_g, nv_g, self.grid.znest,
+                    self.grid.dznest * auTOcm,
+                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+            else:
+                Tv_gr, Tv_gf, tau_v_gr, tau_v_gf = transfer.Tnv_to_cube(
+                    T_g, nv_g, self.grid.znest,
+                    self.grid.dznest * auTOcm,
+                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+
+            # collapse first
             #Tv_gf = self.grid.collapse2D(Tv_gf)
             #Tv_gr = self.grid.collapse2D(Tv_gr)
             #tau_v_gf = self.grid.collapse2D(tau_v_gf)
             #tau_v_gr = self.grid.collapse2D(tau_v_gr)
-
             # v, x, y to v, y, x
             #Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
             #    np.array([Tv_gf, Tv_gr, tau_v_gf, tau_v_gr]), axes = (0,1,3,2))
@@ -226,27 +236,16 @@ class Builder(object):
         Tv_gr = Tv_gr.clip(1., None)
 
 
-        # density to tau
-        #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
-        #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
-        #if (self.line is not None) * (self.iline is not None):
-        #    tau_v_gf = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gf, Tv_gf, delv = None, grid_approx = True)
-        #    tau_v_gr = self.mol.get_tau(self.line, self.iline, 
-        #        Nv_gr, Tv_gr, delv = None, grid_approx = True)
-        #else:
-        #    # ignore temperature effect on conversion from column density to tau
-        #    tau_v_gf = Nv_gf
-        #    tau_v_gr = Nv_gr
-        #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
-
-
         if return_Ttau:
+            Tv_gf = self.grid.collapse2D(Tv_gf)
+            Tv_gr = self.grid.collapse2D(Tv_gr)
+            tau_v_gf = self.grid.collapse2D(tau_v_gf)
+            tau_v_gr = self.grid.collapse2D(tau_v_gr)
             return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
 
         # radiative transfer
         _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
-            dist = dist, au = True)
+            dist = dist, au = True) # in unit of Jy/pixel with the final pixel size
         #_Bv = lambda T, v: Bv(T, v)
         _Bv_cmb = _Bv(Tcmb, f0)
         _Bv_gf  = _Bv(Tv_gf, f0)
@@ -255,17 +254,17 @@ class Builder(object):
         Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
             tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
 
+
         # contsub
         if contsub == False:
             Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
             Iv_d = np.tile(Iv_d, (self.nv,1,))
             Iv += Iv_d # add continuum back
 
-
-        # collapse to cube
         Iv = np.transpose(
-            self.grid.collapse2D(Iv),
+            self.grid.collapse2D(Iv, collapse_mode = 'mean'),
             axes = (0,2,1)) # (v, x, y) to (v, y, x)
+
 
         # Convolve beam if given
         if self.beam is not None:
@@ -352,6 +351,206 @@ class Builder(object):
         plt.close()
 
 
+class Builder_SSDisk(object):
+    '''
+    A disk model with Two Thick Layers (TTL) with a thin dust layer.
+
+    '''
+
+    def __init__(self, model,
+        axes_model: list, axes_sky: list, 
+        xlim: list | None = None, ylim: list | None = None,
+        nsub: list | None = None, reslim: float = 10,
+        beam: list | None = None,
+        coordinate_type = 'polar'):
+        '''
+        Set up model grid and initialize model.
+
+        Parameters
+        ----------
+        axes (list of axes): Three dimensional coordinates aligned plane of sky (au).
+        '''
+        super(Builder_SSDisk, self).__init__()
+
+        # model
+        self.model = model()
+        self._model = model
+
+        # model grid
+        if coordinate_type == 'polar':
+            self.build_polar_grid(axes_model)
+
+        # sky grid
+        self.reslim = reslim
+        self.nsub = nsub
+        x, y, v  = axes_sky
+        self.v = v
+        self.nv = len(v)
+        self.nx = len(x)
+        self.ny = len(y)
+        self.build_sky_grid(x, y, xlim, ylim, nsub, reslim)
+
+        # beam
+        if beam is not None:
+            self.define_beam(beam)
+        else:
+            self.beam = beam
+
+
+    def define_beam(self, beam):
+        '''
+        Parameters
+        ----------
+         beam (list): Observational beam. Must be given in a format of 
+                      [major (au), minor (au), pa (deg)].
+        '''
+        # save beam info
+        self.beam = beam
+        # define Gaussian beam
+        nx, ny = self.skygrid.nx, self.skygrid.ny
+        xx = self.skygrid.xx.copy()
+        yy = self.skygrid.yy.copy()
+        gaussbeam = gaussian2d(xx, yy, 1., 
+            xx[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
+            yy[ny//2 - 1 + ny%2, nx//2 - 1 + nx%2],
+            beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
+        gaussbeam /= np.sum(gaussbeam)
+        self.gaussbeam = gaussbeam
+
+
+    def build_sky_grid(self, x, y, xlim = None, ylim = None, nsub = None, reslim = 10):
+        self.skygrid = Nested2DGrid(x, y, xlim, ylim, nsub, reslim)
+
+
+    def build_polar_grid(self, axes):
+        r, phi = axes
+        self.r = r
+        self.phi = phi
+        self.nr = len(r)
+        self.nphi = len(phi)
+
+        rr, phph = np.meshgrid(r, phi, indexing = 'ij')
+        self.rs = rr.ravel()
+        self.phis = phph.ravel()
+
+
+    def set_model(self, params):
+        # geometric parameters
+        self.dx0 = params['dx0']
+        self.dy0 = params['dy0']
+        self.inc = params['inc']
+        self.__inc_rad = np.radians(self.inc)
+        self.pa = params['pa']
+        self.__pa_rad = np.radians(self.pa)
+
+        # set model parameters
+        #_p = dict(params)
+        #del _p['dx0']
+        #del _p['dy0']
+        self.model.set_params(**params)
+
+
+    def skygrid_info(self):
+        self.skygrid.gridinfo()
+
+
+    def build_model(self):
+        I_int, vlos, dv = self.model.build(self.rs, self.phis)
+        return I_int, vlos, dv
+
+
+    def project_grid(self):
+        # Convert spherical to Cartesian coordinates
+        x = self.rs * np.cos(self.phis)
+        y = self.rs * np.sin(self.phis)
+
+        # Apply inclination and position angle
+        y_rot = y * np.cos(self.__inc_rad)
+        rot_ang = self.__pa_rad + 0.5 * np.pi
+        x_rot = x * np.cos(rot_ang) + y_rot * np.sin(rot_ang)
+        y_rot = -x * np.sin(rot_ang) + y_rot * np.cos(rot_ang)
+
+        self.xrot = x_rot - self.dx0
+        self.yrot = y_rot - self.dy0
+
+
+    def project_quantity(self, q):
+        # interpolator
+        q_proj = griddata(
+            (self.xrot, self.yrot), q, (self.skygrid.xnest, self.skygrid.ynest),
+            method = 'linear', fill_value = 0.)
+        return q_proj
+
+
+
+    def build_cube(self):
+        I_int, vlos, dv = self.build_model()
+        self.project_grid()
+
+        ''' new version; line profile first
+        lnprofs = spectra.glnprof_series(self.v, vlos, dv) # x,y,v
+        lnprofs[np.isnan(lnprofs)] = 0.
+        _Iv = np.tile(I_int, (self.nv, 1,)) * lnprofs
+
+        Iv = np.array([
+            self.project_quantity(_Iv[i,:]) for i in range(self.nv)
+            ])
+        '''
+
+        #'''old version; projection first
+        I_proj = self.project_quantity(I_int)
+        v_proj = self.project_quantity(vlos)
+        dv_proj = self.project_quantity(dv)
+
+        # line profile function
+        lnprofs = spectra.glnprof_series(self.v, v_proj, dv_proj) # x,y,v
+        Iv = np.tile(I_proj, (self.nv, 1,)) * lnprofs
+        #'''
+
+        # collapse
+        Iv = self.skygrid.high_dimensional_collapse(Iv, 
+            fill = 'zero',
+            collapse_mode = 'mean')
+
+        # Convolve beam if given
+        if self.beam is not None:
+            Iv = beam_convolution(
+                self.skygrid.xx.copy(), 
+                self.skygrid.yy.copy(), Iv, 
+                self.beam, self.gaussbeam)
+
+        return Iv
+
+
+    def visualize_grid(self, 
+        keys = ['intensity', 'vlos', 'dv'], savefig = False,
+        showfig = True, outname = None, cmap = 'viridis'):
+        # visualize grid
+        I_int, vlos, dv = self.build_model()
+        self.project_grid()
+
+        qs = []
+        for q, l in zip([I_int, vlos, dv], 
+            ['intensity', 'vlos', 'dv']):
+            if l in keys:
+                _q = self.project_quantity(q)
+                if l == 'intensity':
+                    _q = np.log10(_q)
+                    _q[_q < 0.] = np.nan
+                qs.append(_q)
+
+        for q, l in zip(qs, keys):
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            self.skygrid.visualize_grid(q, ax = ax,
+                showfig = False, savefig = False,
+                outname = outname + '_%s.png'%l, cmap = cmap)
+            ax.text(0.1, 0.9, l, transform = ax.transAxes, ha = 'left', va = 'top')
+            if savefig: fig.savefig(outname + '_%s.png'%l, dpi = 300)
+            if showfig: plt.show()
+            plt.close()
+
+
 def rot2d(x, y, ang):
     return x * np.cos(ang) - y * np.sin(ang), x * np.sin(ang) + y * np.cos(ang)
 
@@ -388,10 +587,7 @@ def Bv(T,v):
     #print((hp*v)/(kb*T))
     exp=np.exp((hp*v)/(kb*T)) - 1.0
     fterm=(2.0*hp*v*v*v)/(clight*clight)
-    Bv=fterm/exp
-    #print(exp, T, v)
-    return Bv
-
+    return fterm/exp
 
 
 # Planck function
@@ -430,6 +626,28 @@ def Bvppx(T, v, px, py, dist = 140., au = True):
     one_pixel_area = np.abs(px*py)
     Bv *= one_pixel_area # Iv (Jy per pixel)
     return Bv
+
+
+def cgs_to_Jyppx(dx, dy, dist = 140., au = True):
+    # From cgs to Jy/str
+    f = 1.e-7 * 1.e4 # cgs --> MKS
+    f *= 1.0e26 # MKS --> Jy (Jy = 10^-26 Wm-2Hz-1)
+
+    # Jy/str -> Jy/pixel
+    if au:
+        px = np.radians(dx / dist / 3600.) # au --> radian
+        py = np.radians(dy / dist / 3600.) # au --> radian
+    else:
+        px = np.radians(dx) # deg --> rad
+        py = np.radians(dy) # deg --> rad
+    # one_pixel_area = pixel*pixel (rad^2)
+    # Exactly, one_pixel_area = 4.*np.arcsin(np.sin(psize*0.5)*np.sin(psize*0.5))
+    #  but the result is almost the same pixel cuz pixel area is much small.
+    # (When psize = 20 au and dist = 140 pc, S_apprx/S_acc = 1.00000000000004)
+    # I [Jy/pixel]   = I [Jy/sr] * one_pixel_area
+    one_pixel_area = np.abs(dx*dy)
+    f *= one_pixel_area # Iv (Jy per pixel)
+    return f
 
 
 

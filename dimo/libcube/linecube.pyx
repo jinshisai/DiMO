@@ -283,7 +283,7 @@ cpdef cnp.ndarray[DTYPE_t, ndim=3] solve_MLRT_cube(
 # solve radiative transfer for multi-layer model
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
-cpdef cnp.ndarray[DTYPE_t, ndim=3] solve_MLRT(
+cpdef cnp.ndarray[DTYPE_t, ndim=2] solve_MLRT(
     cnp.ndarray[DTYPE_t, ndim=2] Sv_gf, 
     cnp.ndarray[DTYPE_t, ndim=2] Sv_gr, 
     cnp.ndarray[DTYPE_t, ndim=1] Sv_d, 

@@ -11,10 +11,10 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Callable
 
-from .models import MultiLayerDisk, ThreeLayerDisk, SingleLayerDisk
+from .models import MultiLayerDisk, ThreeLayerDisk, SingleLayerDisk, SSDisk
 from .grid import Nested2DGrid, SubGrid2D, Nested3DObsGrid
 from .mpe import BayesEstimator
-from .builder import Builder
+from .builder import Builder, Builder_SSDisk
 
 
 np.random.seed(42)
@@ -651,6 +651,123 @@ class DiMO(object):#, FitThinModel):
         else:
             print('ERROR\tfit_cube: axes must consist of three or four axes.')
             return 0
+
+
+    def fit_cube_ssdisk(self, 
+        params, pranges, 
+        d, derr, 
+        r, phi, x, y, v,
+        outname = 'fit_SSDisk', nwalkers=None, 
+        nrun=2000, nburn=1000, labels=[], show_progress=True, 
+        optimize_ini=False, moves = emcee.moves.StretchMove(), 
+        symmetric_error=False, npool = 1, f_rand_init = 1.,
+        show_results = True):
+
+        axes_model = [r, phi]
+        axes_sky = [x, y, v]
+        # drop unecessary axis
+        d = np.squeeze(d)
+        # dimentions
+        nx, ny, nv = len(x), len(y), len(v)
+        # sampling step
+        delx = - (x[1] - x[0]) # au / self.dist # arcsec
+        dely = (y[1] - y[0]) # au / self.dist   # arcsec
+        if self.beam is not None:
+            if self.sampling:
+                smpl_x = int(self.beam[1] * 0.5 / delx)
+                smpl_y = int(self.beam[1] * 0.5 / dely)
+                d_smpld = d[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+                Rbeam_pix = 1.
+            else:
+                smpl_x, smpl_y = 1, 1
+                Rbeam_pix = np.pi/(4.*np.log(2.)) * self.beam[1] * self.beam[0] / delx / dely
+                d_smpld = d.copy()
+        else:
+            Rbeam_pix = 1.
+            smpl_x, smpl_y = 1, 1
+            d_smpld = d.copy()
+
+        # log likelihood
+        def lnlike(params, d, derr, fmodel, *x):
+            mdl = fmodel(*x, *params)
+
+            # Likelihood function (in log)
+            exp = -0.5 * np.nansum((d-mdl)**2/(derr*derr) 
+                + np.log(2.*np.pi*derr*derr)) / Rbeam_pix
+
+            if np.isnan(exp):
+                return -np.inf
+            else:
+                return exp
+
+
+        # labels
+        if len(labels) != len(params): labels = self.pfree_keys
+
+
+        # setup model
+        model = Builder_SSDisk(self.model,
+            axes_model, axes_sky, 
+            xlim = None, ylim = None,
+            nsub = self.n_nest, reslim = self.reslim,
+            beam = self.beam, coordinate_type = 'polar')
+        model.skygrid_info()
+
+
+        # make grid
+        model.set_model(self._params_ini)
+        model.visualize_grid(
+            showfig = False, savefig = True, 
+            cmap = 'coolwarm', outname = 'ssdisk_grid')
+
+
+        # define fitting function
+        axes = [x, y, v]
+        def fitfunc(x, y, v, *params):
+            # safty net
+            if np.all((pranges[0] < np.array([*params])) \
+                * (np.array([*params]) < pranges[1])) == False:
+                return np.zeros(
+                    (len(v), ny, nx)
+                    )[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+
+
+            # merge free parameters to fixed parameters
+            params_free = dict(zip(self.pfree_keys, [*params]))
+            _params_full = merge_dictionaries(params_free, self.params_fixed)
+
+            # update parameters
+            _model = copy.deepcopy(model) # to make sure parallel calculations go well
+            _model.set_model(_params_full)
+
+            # cube on the original grid
+            modelcube = _model.build_cube()
+
+            return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+
+
+        # fitting
+        p0 = list(self.params_free.values())
+        BE = BayesEstimator(axes, d_smpld, derr, fitfunc, lnlike = lnlike)
+        BE.run_mcmc(p0, pranges, outname=outname,
+            nwalkers = nwalkers, nrun = nrun, nburn = nburn, labels = labels,
+            show_progress = show_progress, optimize_ini = optimize_ini, moves = moves,
+            symmetric_error = symmetric_error, npool = npool, f_rand_init = f_rand_init,
+            show_results = show_results)
+        self.pfit = BE.pfit.copy()
+        self.popt = BE.pfit[0]
+        self.perr = BE.pfit[1:]
+
+
+        # best solution
+        smpl_y, smpl_x = 1, 1
+        modelcube = fitfunc(x, y, v, *self.popt)
+        #modelcube = fitfunc(x, y, z, v, *list(self.params_free.values()))
+        self.modelcube = modelcube
+
+        self.writeout_fitres(outname, BE.criterion)
+
+        return modelcube
 
 
     # define fitting function

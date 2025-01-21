@@ -290,7 +290,7 @@ class Nested2DGrid(object):
                     d_col, nsub, 
                     binning_mode = 'sum')
                 _d *= np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1]) # per a^-2 with a of the pixel unit)
-                print('(l, Rarea_l-1,l) = (%i, %.2f)'%(l, np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1])))
+                #print('(l, Rarea_l-1,l) = (%i, %.2f)'%(l, np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1])))
             #print(ximin, ximax, yimin, yimax)
 
             # go upper layer
@@ -989,6 +989,8 @@ class Nested3DObsGrid(object):
         self.xnest = self.xx.ravel() # save all grid info in 1D array
         self.ynest = self.yy.ravel()
         self.znest = self.zz.ravel()
+        self.dxnest = dx
+        self.dynest = dy
         self.dznest = dz
         self.partition = [0, self.xnest.size] # partition indices
         self.xypartition = [0, nx * ny] # partition indices
@@ -1083,6 +1085,8 @@ class Nested3DObsGrid(object):
         for l in range(1, self.nlevels):
             # axes of the parental grid
             x, y, z = self.xaxes[l-1], self.yaxes[l-1], self.zaxes[l-1]
+            #dx = x[1] - x[0]
+            #dy = y[1] - y[0]
 
             # make childe grid
             ximin, ximax, yimin, yimax, x_sub, y_sub = \
@@ -1136,6 +1140,8 @@ class Nested3DObsGrid(object):
             xnest = np.concatenate([xnest, Rx]) # update
             ynest = np.concatenate([ynest, R1y, R2y, R3y, R4y]) # update
             znest = np.concatenate([znest, R1z, R2z, R3z, R4z]) # update
+            #dxnest = np.concatenate([dxnest, np.full(nl, dx)])
+            #dynest = np.concatenate([dynest, np.full(nl, dy)])
             dznest = np.concatenate([dznest, np.full(nl, dz)])
 
 
@@ -1145,13 +1151,15 @@ class Nested3DObsGrid(object):
         ynest = np.concatenate([ynest, yy_sub.ravel()]) # update
         znest = np.concatenate([znest, zz_sub.ravel()]) # update
         dznest = np.concatenate([dznest, np.full(xx_sub.size, dz_sub)])
+        nd = xnest.size
+        partition.append(nd)
 
         self.xnest = xnest
         self.ynest = ynest
         self.znest = znest
         self.dznest = dznest
         self.partition = partition
-
+        self.nd = nd
 
     def nest_z_preserved(self):
         '''
@@ -1241,6 +1249,9 @@ class Nested3DObsGrid(object):
         ynest = np.vstack([ynest, yy_sub.reshape((nx*ny, nz))])
         znest = np.vstack([znest, zz_sub.reshape((nx*ny, nz))])
         dznest = np.vstack([dznest, np.full((nx*ny, nz), dz_sub)])
+        nxy, nz = xnest.shape
+        partition.append(xnest.size)
+        xypartition.append(nxy)
 
         self.xnest = xnest
         self.ynest = ynest
@@ -1248,8 +1259,6 @@ class Nested3DObsGrid(object):
         self.dznest = dznest
         self.partition = partition
         self.xypartition = xypartition
-
-        nxy, nz = xnest.shape
         self.nxy = nxy
 
 
@@ -1270,7 +1279,7 @@ class Nested3DObsGrid(object):
         d (2D array): List of data on the nested grid
         '''
         lmax = 0 if upto is None else upto
-        d_col = d[self.xypartition[-1]:,:] # starting from the inner most grid
+        d_col = d[self.xypartition[-2]:,:] # starting from the inner most grid
         d_col = d_col.reshape(tuple(self.ngrids[-1,:]))
         for l in range(self.nlevels-1,lmax,-1):
             nsub = self.nsub[l-1]
@@ -1323,7 +1332,7 @@ class Nested3DObsGrid(object):
         d (1D array): List of data on the nested grid
         '''
         lmax = 0 if upto is None else upto
-        d_col = d[self.partition[-1]:] # starting from the inner most grid
+        d_col = d[self.partition[-2]:] # starting from the inner most grid
         d_col = d_col.reshape(tuple(self.ngrids[-1,:]))
         for l in range(self.nlevels-1,lmax,-1):
             nsub = self.nsub[l-1]
@@ -1367,20 +1376,23 @@ class Nested3DObsGrid(object):
         return d_col
 
 
-    def collapse2D(self, d, upto = None, fill = 'nan'):
+    def collapse2D(self, d, upto = None, fill = 'nan', collapse_mode = 'mean'):
         ndim = len(d.shape)
         #print(ndim)
         if ndim == 1:
-            d_col = self.collapse2D_no_extradim(d, upto = upto, fill = fill)
+            d_col = self.collapse2D_no_extradim(d, upto = upto, 
+                fill = fill, collapse_mode = collapse_mode)
         elif ndim == 2:
-            d_col = self.collapse2D_extra_1d(d, upto = upto, fill = fill)
+            d_col = self.collapse2D_extra_1d(d, upto = upto, 
+                fill = fill, collapse_mode = collapse_mode)
         else:
             print('ERROR\tcollapse2D: currently only ndim=2 is supported.')
             return 0
         return d_col
 
 
-    def collapse2D_no_extradim(self, d, upto = None, fill = 'nan'):
+    def collapse2D_no_extradim(self, d, upto = None, 
+        fill = 'nan', collapse_mode = 'mean'):
         '''
         Collapse given data to the mother grid.
 
@@ -1389,14 +1401,26 @@ class Nested3DObsGrid(object):
         d (2D array): Data on nested grid
         '''
         lmax = 0 if upto is None else upto
-        d_col = d[self.xypartition[-1]:] # starting from the inner most grid
+        d_col = d[self.xypartition[-2]:] # starting from the inner most grid
         d_col = d_col.reshape(tuple(self.ngrids[-1,:-1])) # to (nx, ny)
         for l in range(self.nlevels-1,lmax,-1):
             nsub = self.nsub[l-1]
             ximin, ximax = self.xinest[l*2:(l+1)*2]
             yimin, yimax = self.yinest[l*2:(l+1)*2]
             # collapse data on the inner grid
-            _d = self.binning_onsubgrid_xy(d_col, nsub)
+            if collapse_mode == 'mean':
+                _d = self.binning_onsubgrid_xy(d_col, nsub,
+                    binning_mode = 'mean')
+            elif collapse_mode == 'sum':
+                _d = self.binning_onsubgrid_xy(d_col, nsub,
+                    binning_mode = 'sum')
+            elif collapse_mode == 'integrate':
+                #d_col *= np.abs(self.dxnest[l] * self.dynest[l]) # per pix
+                _d = self.binning_onsubgrid_xy(
+                    d_col, nsub, 
+                    binning_mode = 'sum')
+                _d *= np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1]) # per a^-2 with a of the pixel unit)
+                print('(l, Rarea_l-1,l) = (%i, %.2f)'%(l, np.abs(self.dxnest[l] * self.dynest[l]) / np.abs(self.dxnest[l-1] * self.dynest[l-1])))
             #print(l, ximin, ximax, yimin, yimax)
             #print(np.nanmax(_d))
 
@@ -1439,7 +1463,8 @@ class Nested3DObsGrid(object):
         return d_col
 
 
-    def collapse2D_extra_1d(self, d, upto = None, fill = 'nan'):
+    def collapse2D_extra_1d(self, d, upto = None, 
+        fill = 'nan', collapse_mode = 'mean'):
         '''
         Collapse given data to the mother grid.
 
@@ -1449,7 +1474,7 @@ class Nested3DObsGrid(object):
         '''
         lmax = 0 if upto is None else upto
         nv, nd = d.shape
-        d_col = d[:, self.xypartition[-1]:] # starting from the inner most grid
+        d_col = d[:, self.xypartition[-2]:] # starting from the inner most grid
         d_col = d_col.reshape(
             (nv, self.ngrids[-1,:][0], self.ngrids[-1,:][1])) # to (nv, nx, ny)
         for l in range(self.nlevels-1,lmax,-1):
@@ -1457,7 +1482,12 @@ class Nested3DObsGrid(object):
             ximin, ximax = self.xinest[l*2:(l+1)*2]
             yimin, yimax = self.yinest[l*2:(l+1)*2]
             # collapse data on the inner grid
-            _d = self.binning_onsubgrid_xy(d_col, nsub)
+            if collapse_mode == 'mean':
+                _d = self.binning_onsubgrid_xy(d_col, nsub,
+                    binning_mode = 'mean')
+            elif collapse_mode == 'sum':
+                _d = self.binning_onsubgrid_xy(d_col, nsub,
+                    binning_mode = 'sum')
             #print(ximin, ximax, yimin, yimax, zimin, zimax)
 
             # go upper layer
@@ -1518,7 +1548,7 @@ class Nested3DObsGrid(object):
         '''
         lmax = 0 if upto is None else upto
         nv, nd = d.shape
-        d_col = d[:, self.partition[-1]:] # starting from the inner most grid
+        d_col = d[:, self.partition[-2]:] # starting from the inner most grid
         d_col = d_col.reshape(
             (nv, self.ngrids[-1,:][0], self.ngrids[-1,:][1], self.ngrids[-1,:][2]))
         for l in range(self.nlevels-1,lmax,-1):
@@ -1646,7 +1676,7 @@ class Nested3DObsGrid(object):
         return np.nanmean(d_avg, axis = 0)
 
 
-    def binning_onsubgrid_xy(self, data, nbin):
+    def binning_onsubgrid_xy(self, data, nbin, binning_mode = 'mean'):
         dshape = len(data.shape)
         if dshape == 2:
             d_avg = np.array([
@@ -1666,7 +1696,13 @@ class Nested3DObsGrid(object):
         else:
             print('ERROR\tbinning_onsubgrid_xy: only Nd of data of 2-4 is now supported.')
             return 0
-        return np.nanmean(d_avg, axis = 0)
+        if binning_mode == 'mean':
+            return np.nanmean(d_avg, axis = 0)
+        elif binning_mode == 'sum':
+            return np.nansum(d_avg, axis = 0)
+        else:
+            print("ERROR\tbinning_onsubgrid_xy: binning_mode must be 'mean' or 'sum'.")
+            return 0
 
 
     def gridinfo(self, units = ['au', 'au', 'au']):

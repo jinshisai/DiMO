@@ -990,13 +990,17 @@ class SSDisk:
     vsys: float = 0.
     dv: float = 0.
     pdv: float = 0.
+    r0: float = 1.
+    dx0: float = 0.
+    dy0: float = 0.
 
     __inc_rad: float = np.radians(inc)
     __pa_rad: float = np.radians(pa)
 
 
     def set_params(self, Ic = 0, rc = 0, beta = 0, gamma = 0, 
-        inc = 0, pa = 0, ms = 0, vsys = 0, dv = 0, pdv = 0.):
+        inc = 0, pa = 0, ms = 0, vsys = 0, dv = 0, pdv = 0., r0 = 1.,
+        dx0 = 0., dy0 = 0.):
         '''
 
         Parameters
@@ -1020,6 +1024,9 @@ class SSDisk:
         self.vsys = vsys
         self.dv = dv
         self.pdv = pdv
+        self.r0 = r0
+        self.dx0 = dx0
+        self.dy0 = dy0
 
         self.__inc_rad = np.radians(inc)
         self.__pa_rad = np.radians(pa)
@@ -1042,7 +1049,7 @@ class SSDisk:
         vlos = vkep(r * auTOcm, self.ms * Msun) \
         * np.cos(phi) * np.sin(self.__inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
 
-        dv = self.dv * (r / 1.)**(-self.pdv)
+        dv = self.dv * (r / self.r0)**(-self.pdv)
 
         return I_int, vlos, dv
 

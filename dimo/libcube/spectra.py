@@ -7,7 +7,7 @@ from math import erf
 #config.THREADING_LAYER = 'tbb'
 
 @njit(parallel=True)
-def glnprof_series(v, v0, delv):
+def glnprof_series(v, v0, delv, unit_scale = 1.):
     '''
     Generate series of normalized Gaussian line profiles.
 
@@ -28,8 +28,8 @@ def glnprof_series(v, v0, delv):
         sampled_fraction = 0.5 * (erf((v_max - v0[i]) / (delv[i])) # np.sqrt(2.)
             - erf((v_min - v0[i]) / (delv[i])))
         #print(sampled_fraction)
-        lnprof[:,i] = profi / np.sum(profi * dv_cell) * sampled_fraction * 1.e-5
-        lnprof[:,i][lnprof[:,i] <= 3.7e-5 / np.sqrt(np.pi * delv[i]) * 1.e-5 ] = 0. # 5 sigma
+        lnprof[:,i] = profi / np.sum(profi * dv_cell) * sampled_fraction * unit_scale
+        lnprof[:,i][lnprof[:,i] <= 3.7e-5 / np.sqrt(np.pi * delv[i]) * unit_scale] = 0. # 5 sigma
 
     return lnprof
 
