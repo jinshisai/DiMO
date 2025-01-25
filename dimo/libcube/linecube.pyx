@@ -62,6 +62,38 @@ cpdef cnp.ndarray[DTYPE_t, ndim=4] Tt_to_cube(
 
 
 
+# xyz temperature and density to xyzv
+# For nested grid
+@cython.boundscheck(False) # turn off bounds-checking for entire function
+@cython.wraparound(False)  # turn off negative index wrapping for entire function
+cpdef cnp.ndarray[DTYPE_t, ndim=3] to_xyzv(
+    cnp.ndarray[DTYPE_t, ndim=2] data,
+    cnp.ndarray[DTYPE_t, ndim=2] lnprof,
+    ):
+    '''
+    Convert flattend cubic data into xyzv 4D data with given line profiles.
+
+    Parameters
+    ----------
+     data (2D array): flattend cubic data. Must be in shape of (nq, nd), where
+      nq is number of quantities and nd is number of data that is nx * ny * nz.
+     lnprof (2D array): Line profile for each cell. Must be in shape of (nv, nd),
+      where nv is number of velocity cells and nd is number of data.
+    '''
+    cdef int nv = lnprof.shape[0]
+    cdef int nd = lnprof.shape[1]
+    cdef int nq = data.shape[0]
+    cdef cnp.ndarray[DTYPE_t, ndim=3] xyzv = np.zeros((nq, nv, nd))
+    cdef int i, j, k
+
+    for i in range(nq):
+        for j in range(nv):
+            for k in range(nd):
+                xyzv[i,j,k] = data[i,k] * lnprof[j,k]
+
+    return xyzv
+
+
 # temperature, density and linewidth to cube
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
@@ -219,7 +251,7 @@ cpdef cnp.ndarray[DTYPE_t, ndim=3] solve_3LRT(
 # solve radiative transfer for multi-layer model
 @cython.boundscheck(False) # turn off bounds-checking for entire function
 @cython.wraparound(False)  # turn off negative index wrapping for entire function
-cpdef cnp.ndarray[DTYPE_t, ndim=3] solve_MLRT(
+cpdef cnp.ndarray[DTYPE_t, ndim=3] solve_MLRT_cube(
     cnp.ndarray[DTYPE_t, ndim=3] Sv_gf, 
     cnp.ndarray[DTYPE_t, ndim=3] Sv_gr, 
     cnp.ndarray[DTYPE_t, ndim=2] Sv_d, 
@@ -244,6 +276,36 @@ cpdef cnp.ndarray[DTYPE_t, ndim=3] solve_MLRT(
                 * exp(- tau_gf[k,j,i]  - tau_d[j,i] ) \
                 + Sv_d[j,i] * (1. - exp(- tau_d[j,i])) * exp(- tau_gf[k,j,i]) \
                 + Sv_gf[k,j,i] * (1. - exp(- tau_gf[k,j,i])) \
+                - Iv_d
+    return Iv
+
+
+# solve radiative transfer for multi-layer model
+@cython.boundscheck(False) # turn off bounds-checking for entire function
+@cython.wraparound(False)  # turn off negative index wrapping for entire function
+cpdef cnp.ndarray[DTYPE_t, ndim=2] solve_MLRT(
+    cnp.ndarray[DTYPE_t, ndim=2] Sv_gf, 
+    cnp.ndarray[DTYPE_t, ndim=2] Sv_gr, 
+    cnp.ndarray[DTYPE_t, ndim=1] Sv_d, 
+    cnp.ndarray[DTYPE_t, ndim=2] tau_gf,
+    cnp.ndarray[DTYPE_t, ndim=2] tau_gr,
+    cnp.ndarray[DTYPE_t, ndim=1] tau_d,
+    double Sv_bg,
+    int nv):
+    cdef int nd = Sv_d.shape[0]
+    cdef double Iv_d
+    cdef cnp.ndarray[DTYPE_t, ndim=2] Iv = np.zeros((nv, nd))
+    cdef int i, j, k
+
+    for j in range(nv):
+        for i in range(nd):
+            Iv_d = (Sv_d[i] - Sv_bg) * (1. - exp(- tau_d[i]))
+            Iv[j, i] = Sv_bg * (
+                exp(- tau_gf[j,i] - tau_d[i] - tau_gr[j,i]) - 1.) \
+                + Sv_gr[j,i] * (1. - exp(- tau_gr[j,i])) \
+                * exp(- tau_gf[j,i]  - tau_d[i] ) \
+                + Sv_d[i] * (1. - exp(- tau_d[i])) * exp(- tau_gf[j,i]) \
+                + Sv_gf[j,i] * (1. - exp(- tau_gf[j,i])) \
                 - Iv_d
     return Iv
 
