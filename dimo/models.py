@@ -30,10 +30,14 @@ hp     = constants.h.cgs.value # Planck constant [erg s]
 auTOcm = units.au.to('cm') # 1 au (cm)
 
 
+
 @dataclass(slots=True)
 class MultiLayerDisk:
     '''
-    A disk model with Two Thick Layers (TTL) with a thin dust layer.
+    Multi-layer Disk Model where thickness of gas layers are taken into account with
+     channel-based three-layer approximation.
+    The disk model consists of two gas layers having a finite thicnkess
+     and a geometrically thin dust layer.
     '''
 
     # params for dust layer
@@ -69,9 +73,9 @@ class MultiLayerDisk:
 
 
     # hidden parameters
-    __inc_rad: float = np.radians(inc)
-    __pa_rad: float = np.radians(pa)
-    __side: int = np.sign(np.cos(__inc_rad)) # cos(-i) = cos(i)
+    _inc_rad: float = np.radians(inc)
+    _pa_rad: float = np.radians(pa)
+    _side: int = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
 
 
     def set_params(self, 
@@ -135,15 +139,28 @@ class MultiLayerDisk:
 
 
         # hidden parameters
-        self.__inc_rad = np.radians(inc)
-        self.__pa_rad = np.radians(pa)
-        self.__side = np.sign(np.cos(self.__inc_rad)) # cos(-i) = cos(i)
+        self._inc_rad = np.radians(inc)
+        self._pa_rad = np.radians(pa)
+        self._side = np.sign(np.cos(self._inc_rad)) # cos(-i) = cos(i)
 
 
-    def get_paramkeys(self):
-        paramkeys = list(self.__annotations__.keys())
+    @classmethod
+    def get_paramkeys(cls):
+        paramkeys = list(cls.get_annotations().keys())
         paramkeys = [i for i in paramkeys if i[0] != '_']
         return paramkeys
+
+
+    @classmethod
+    def get_annotations(cls):
+        d = {}
+        for c in cls.mro():
+            try:
+                d.update(**c.__annotations__)
+            except AttributeError:
+                # object, at least, has no __annotations__ attribute.
+                pass
+        return d
 
 
     def print_params(self):
@@ -176,11 +193,11 @@ class MultiLayerDisk:
 
     def gas_velocity(self, R, phi, z):
         return vkep(R * auTOcm, self.ms * Msun, z * auTOcm) *\
-         np.cos(phi) * np.sin(self.__inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
+         np.cos(phi) * np.sin(self._inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
 
 
     def speed_to_velocity(self, gs, phi,):
-        return gs * np.cos(phi) * np.sin(self.__inc_rad)
+        return gs * np.cos(phi) * np.sin(self._inc_rad)
 
 
     def gas_density(self, R, z,):
@@ -199,10 +216,10 @@ class MultiLayerDisk:
         #side = np.sign(np.cos(self.__inc_rad)) # cos(-i) = cos(i)
 
         # height of fore/rear layers
-        z0f = zl * self.__side
-        z0r = - zl * self.__side
+        z0f = zl * self._side
+        z0r = - zl * self._side
 
-        if self.__side > 0.:
+        if self._side > 0.:
             # positive z is fore side
             zout_f = np.where(z - z0f > 0.) # outer side
             zin_f = np.where( (z <= z0f) * (z > 0.)) # inner side
@@ -365,7 +382,143 @@ class MultiLayerDisk:
 
 
     def side(self):
-        return self.__side
+        return self._side
+
+
+@dataclass(slots=True)
+class MultiLayerRingDisk(MultiLayerDisk):
+
+    # add an axisymmetric over density region
+    # described with a Gaussian ring
+    r_ring: float = 0. # radius of ring
+    log_N_ring: float = 0. # peak surface density of ring
+    w_ring: float = 0. # with of ring defined as standard deviation of Gaussian
+    # geometrical parameters (over write)
+    inc: float = 0.
+    pa: float = 0.
+
+    # hidden parameters
+    #__inc_rad: float = np.radians(inc)
+    #__pa_rad: float = np.radians(pa)
+    #__side: int = np.sign(np.cos(__inc_rad)) # cos(-i) = cos(i)
+
+
+    def set_params(self, 
+        Td0 = 400., qd = 0.5, log_tau_dc = 0., rc_d = 100., gamma_d = 1., 
+        Tg0 = 400., qg = 0.5, log_N_gc = 0., rc_g = 100., gamma_g = 1., 
+        r_ring = 0., log_N_ring = 0., w_ring = 0.,
+        z0 = 0., pz = 1.25, h0 = 0., ph = 0., inc = 0., pa = 0., ms = 1., vsys = 0, 
+        dx0=0., dy0=0., r0 = 1., dv = 0., pdv = 0.25):
+        '''
+
+        Parameters
+        ----------
+         Td0
+         qd
+         Tg0 (float): K
+         qg (float):
+         z0 (float): au
+         hp (float):
+         r0 (float): au
+         tau_dc (float):
+         rc_d (float): au
+         gamma_d (float):
+         tau_gc (float):
+         rc_g (float): au
+         gamma_g (float):
+         inc (float): deg
+         pa (float): deg
+         ms (float): Msun
+         vsys (float): km/s
+        '''
+        # initialize parameters
+        # dust layer
+        self.Td0 = Td0
+        self.qd  = qd
+        self.log_tau_dc = log_tau_dc
+        self.rc_d = rc_d
+        self.gamma_d = gamma_d
+        # gas layer
+        self.Tg0 = Tg0 # gas temperature
+        self.qg = qg
+        self.log_N_gc = log_N_gc
+        self.rc_g = rc_g
+        self.gamma_g = gamma_g
+        # gas layer ring
+        self.r_ring = r_ring
+        self.log_N_ring = log_N_ring
+        self.w_ring = w_ring
+        # gas layer height
+        self.z0 = z0
+        self.pz = pz
+        # gas layer width
+        self.h0 = h0
+        self.ph = ph
+        # geometry & velocity
+        self.inc = inc
+        self.pa = pa
+        self.ms = ms
+        self.vsys = vsys
+        # positional offsets
+        self.dx0 = dx0
+        self.dy0 = dy0
+        # reference radius
+        self.r0 = r0
+        # line width
+        self.dv = dv
+        self.pdv = pdv
+
+
+        # hidden parameters
+        self._inc_rad = np.radians(inc)
+        self._pa_rad = np.radians(pa)
+        self._side = np.sign(np.cos(self._inc_rad)) # cos(-i) = cos(i)
+
+
+    def gas_density(self, R, z,):
+        # surface density
+        N_pl = ssdisk(R, 10.**self.log_N_gc, self.rc_g, self.gamma_g, beta = None)
+        N_rng = 10.**self.log_N_ring * np.exp(- 0.5 * (R - self.r_ring) ** 2. / (self.w_ring**2.))
+        N_g = N_pl + N_rng
+
+        # puff up layer
+        # layer height
+        zl = self.z0 * (R / self.r0)**(self.pz) # height
+        h_out = self.h0 * (R / self.r0)**(self.ph)
+        h_in = h_out
+
+        # check which is fore or rear side
+        #side = np.sign(np.cos(self.__inc_rad)) # cos(-i) = cos(i)
+
+        # height of fore/rear layers
+        z0f = zl * self._side
+        z0r = - zl * self._side
+
+        if self._side > 0.:
+            # positive z is fore side
+            zout_f = np.where(z - z0f > 0.) # outer side
+            zin_f = np.where( (z <= z0f) * (z > 0.)) # inner side
+            # negative z is rear side
+            zout_r = np.where(z - z0r < 0.) # outer side
+            zin_r = np.where( (z >= z0r) * (z < 0.)) # inner side
+        else:
+            # positive z is rear side
+            zout_r = np.where(z - z0r > 0.) # outer side
+            zin_r = np.where((z <= z0r) * (z > 0.)) # inner side
+            # negative z is fore side
+            zout_f = np.where(z - z0f < 0.) # outer side
+            zin_f = np.where( (z >= z0f) * (z < 0.)) # inner side
+
+        ng = np.zeros(N_g.shape)
+        ng[zout_f] = self.puff_up_layer(N_g[zout_f], z[zout_f], z0f[zout_f], h_out[zout_f]) / auTOcm # cm^-3
+        ng[zin_f] = self.puff_up_layer(N_g[zin_f], z[zin_f], z0f[zin_f], h_in[zin_f]) / auTOcm # cm^-3
+
+        # rear layer
+        ng[zout_r] = self.puff_up_layer(N_g[zout_r], z[zout_r], z0r[zout_r], h_out[zout_r]) / auTOcm # cm^-3
+        ng[zin_r] = self.puff_up_layer(N_g[zin_r], z[zin_r], z0r[zin_r], h_in[zin_r]) / auTOcm # cm^-3
+
+        return ng
+
 
 
 @dataclass(slots=True)
