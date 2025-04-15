@@ -149,6 +149,7 @@ class Builder(object):
         self.yps = y
         self.zps = z
 
+
         # cylindarical coordinates
         Rs = np.sqrt(x * x + y * y) # radius
         Rs[Rs < self.rin] = np.nan
@@ -329,7 +330,7 @@ class Builder(object):
             #ax1.add_patch(rect)
 
         #ax1.set_xlim(_grid.zlim[0][0], _grid.zlim[0][1])
-        ax1.set_ylim(_grid.xlim[0])
+        ax1.set_ylim(np.min(_grid.xlim[0]), np.max(_grid.xlim[0]) )
         ax2.set_ylim(_grid.ylim[0])
 
         ax1.set_ylabel(r'$x$ (au)')
@@ -345,6 +346,133 @@ class Builder(object):
         _grid.visualize_xz(n_g, 
             ax = ax1, vmax = np.nanmax(n_g) * 0.01, cmap = cmap)
         '''
+
+        if savefig: fig.savefig(outname + '.png', dpi = 300, transparent = True)
+        if showfig: plt.show()
+        plt.close()
+
+
+    def show_model_faceview(self, 
+        dv_mode='total', cmap = 'viridis', 
+        savefig = False, showfig = True, 
+        outname = 'model_sideview', vmax = 0.90, vmin = 0.):
+        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode=dv_mode)
+        #n_g = self.grid.collapse(n_g)
+
+        vmax *= np.nanmax(n_g)
+
+        #fig = plt.figure()
+        #ax = fig.add_subplot(111)
+        fig, ax1 = plt.subplots(1,1)
+        #ax1 = axes
+
+
+        # from upper to lower
+        _grid = copy.deepcopy(self.grid)
+        for l in range(_grid.nlevels):
+            nx, ny, nz = _grid.ngrids[l,:]
+            xmin, xmax = _grid.xlim[l]
+            ymin, ymax = _grid.ylim[l]
+
+            d_plt = _grid.collapse(n_g, upto = l)
+
+            # hide parental layer
+            if l <= _grid.nlevels-2:
+                ximin, ximax = _grid.xinest[(l+1)*2:(l+2)*2]
+                yimin, yimax = _grid.yinest[(l+1)*2:(l+2)*2]
+                d_plt[ximin:ximax+1,yimin:yimax+1] = np.nan
+
+            _xx, _yy, _zz = _grid.get_grid(l)
+
+            if self.adoptive_zaxis:
+                zoff = _grid.collapse(self.zoffset, upto = l)
+                _zz += zoff
+
+            ax1.pcolormesh(_xx[:, :, nz//2], _yy[:, :, nz//2], d_plt[:, :, nz//2], 
+                alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
+            rect = plt.Rectangle((xmin, ymin), 
+                xmax - xmin, ymax - ymin, edgecolor = 'white', facecolor = "none",
+                linewidth = 0.5, ls = '--')
+            ax1.add_patch(rect)
+
+        #ax1.set_xlim(_grid.zlim[0][0], _grid.zlim[0][1])
+        ax1.set_xlim(_grid.xlim[0])
+        ax1.set_ylim(_grid.ylim[0])
+
+        ax1.set_xlabel(r'$x$ (au)')
+        ax1.set_ylabel(r'$y$ (au)')
+
+        fig.tight_layout()
+
+        '''
+        _grid = copy.deepcopy(self.grid)
+        if self.adoptive_zaxis:
+            _grid.znest += self.zoffset
+        _grid.visualize_xz(n_g, 
+            ax = ax1, vmax = np.nanmax(n_g) * 0.01, cmap = cmap)
+        '''
+
+        if savefig: fig.savefig(outname + '.png', dpi = 300, transparent = True)
+        if showfig: plt.show()
+        plt.close()
+
+
+
+    def show_model_4Dview(self, 
+        dv_mode='total', cmap = 'viridis', 
+        savefig = False, showfig = True, 
+        outname = 'model_sideview', vmax = 0.90, vmin = 0.,
+        nsparse = 10):
+        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode=dv_mode)
+        #n_g = self.grid.collapse(n_g)
+
+        vmax *= np.nanmax(n_g)
+
+        fig = plt.figure()
+        ax = fig.add_subplot(111, projection = '3d')
+
+
+        # from upper to lower
+        _grid = copy.deepcopy(self.grid)
+        for l in range(_grid.nlevels):
+            nx, ny, nz = _grid.ngrids[l,:]
+            xmin, xmax = _grid.xlim[l]
+            ymin, ymax = _grid.ylim[l]
+
+            d_plt = _grid.collapse(n_g, upto = l)
+
+            # hide parental layer
+            if l <= _grid.nlevels-2:
+                ximin, ximax = _grid.xinest[(l+1)*2:(l+2)*2]
+                yimin, yimax = _grid.yinest[(l+1)*2:(l+2)*2]
+                d_plt[ximin:ximax+1,yimin:yimax+1,:] = np.nan
+
+            _xx, _yy, _zz = _grid.get_grid(l)
+
+            if self.adoptive_zaxis:
+                zoff = _grid.collapse(self.zoffset, upto = l)
+                _zz += zoff
+
+            x_sparse = nx//nsparse
+            y_sparse = ny//nsparse
+            z_sparse = nz//nsparse
+            d_plt = d_plt[::x_sparse, ::y_sparse, ::z_sparse].ravel()
+            _xx_plt = _xx[::x_sparse, ::y_sparse, ::z_sparse].ravel()[~np.isnan(d_plt)]
+            _yy_plt = _yy[::x_sparse, ::y_sparse, ::z_sparse].ravel()[~np.isnan(d_plt)]
+            _zz_plt = _zz[::x_sparse, ::y_sparse, ::z_sparse].ravel()[~np.isnan(d_plt)]
+            d_plt = d_plt[~np.isnan(d_plt)]
+            ax.scatter(_xx_plt, _yy_plt, _zz_plt, c = d_plt, 
+                alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
+
+        #ax1.set_xlim(_grid.zlim[0][0], _grid.zlim[0][1])
+        #ax1.set_xlim(_grid.xlim[0])
+        #ax1.set_ylim(_grid.ylim[0])
+
+        ax.set_xlabel(r'$x$ (au)')
+        ax.set_ylabel(r'$y$ (au)')
+        ax.set_zlabel(r'$z$ (au)')
+
+        fig.tight_layout()
 
         if savefig: fig.savefig(outname + '.png', dpi = 300, transparent = True)
         if showfig: plt.show()
@@ -454,8 +582,11 @@ class Builder_SSDisk(object):
         self.skygrid.gridinfo()
 
 
-    def build_model(self):
-        I_int, vlos, dv = self.model.build(self.rs, self.phis)
+    def build_model(self, build_args = None):
+        if build_args is not None:
+            I_int, vlos, dv = self.model.build(self.rs, self.phis, *build_args)
+        else:
+            I_int, vlos, dv = self.model.build(self.rs, self.phis,)
         return I_int, vlos, dv
 
 
@@ -470,21 +601,21 @@ class Builder_SSDisk(object):
         x_rot = x * np.cos(rot_ang) + y_rot * np.sin(rot_ang)
         y_rot = -x * np.sin(rot_ang) + y_rot * np.cos(rot_ang)
 
-        self.xrot = x_rot - self.dx0
-        self.yrot = y_rot - self.dy0
+        self.xproj = x_rot - self.dx0
+        self.yproj = y_rot - self.dy0
 
 
     def project_quantity(self, q):
         # interpolator
         q_proj = griddata(
-            (self.xrot, self.yrot), q, (self.skygrid.xnest, self.skygrid.ynest),
+            (self.xproj, self.yproj), q, (self.skygrid.xnest, self.skygrid.ynest),
             method = 'linear', fill_value = 0.)
         return q_proj
 
 
 
-    def build_cube(self):
-        I_int, vlos, dv = self.build_model()
+    def build_cube(self, build_args =  None):
+        I_int, vlos, dv = self.build_model(build_args)
         self.project_grid()
 
         ''' new version; line profile first
@@ -524,9 +655,10 @@ class Builder_SSDisk(object):
 
     def visualize_grid(self, 
         keys = ['intensity', 'vlos', 'dv'], savefig = False,
-        showfig = True, outname = None, cmap = 'viridis'):
+        showfig = True, outname = None, cmap = 'viridis',
+        build_args = None):
         # visualize grid
-        I_int, vlos, dv = self.build_model()
+        I_int, vlos, dv = self.build_model(build_args)
         self.project_grid()
 
         qs = []
@@ -542,9 +674,10 @@ class Builder_SSDisk(object):
         for q, l in zip(qs, keys):
             fig = plt.figure()
             ax = fig.add_subplot(111)
+            _outname = outname + '_%s.png'%l if outname is not None else None
             self.skygrid.visualize_grid(q, ax = ax,
                 showfig = False, savefig = False,
-                outname = outname + '_%s.png'%l, cmap = cmap)
+                outname = _outname, cmap = cmap)
             ax.text(0.1, 0.9, l, transform = ax.transAxes, ha = 'left', va = 'top')
             if savefig: fig.savefig(outname + '_%s.png'%l, dpi = 300)
             if showfig: plt.show()

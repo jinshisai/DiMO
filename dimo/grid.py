@@ -41,7 +41,7 @@ class Nested2DGrid(object):
         # nested grid
         self.xnest = self.xx.ravel()
         self.ynest = self.yy.ravel()
-        self.partition = self.xnest.size
+        self.partition = [0, self.xnest.size]
         # starting and ending indices
         self.xinest = [-1,-1]
         self.yinest = [-1,-1]
@@ -56,8 +56,8 @@ class Nested2DGrid(object):
             self.ylim.insert(0, [ye[0], ye[-1]])
             self.nest()
         else:
-            self.xlim = [xe[0], xe[-1]]
-            self.ylim = [ye[0], ye[-1]]
+            self.xlim = [[xe[0], xe[-1]]]
+            self.ylim = [[ye[0], ye[-1]]]
 
 
     def get_nestinglim(self, reslim = 5):
@@ -95,8 +95,8 @@ class Nested2DGrid(object):
         # if it is not collapsed
         if self.xnest[partition[0]:].size == _nx * _ny:
             #partition = self.partition[l:l+2]
-            xx = self.xnest[partition[0]:].reshape(_nx, _ny)
-            yy = self.ynest[partition[0]:].reshape(_nx, _ny)
+            xx = self.xnest[partition[0]:].reshape(_ny, _nx)
+            yy = self.ynest[partition[0]:].reshape(_ny, _nx)
         else:
             # else
             x, y = self.xaxes[l], self.yaxes[l]
@@ -126,10 +126,10 @@ class Nested2DGrid(object):
             self.xinest += [ximin, ximax] # starting and ending indices on the upper-layer grid
             self.yinest += [yimin, yimax]
             self.xaxes[l], self.yaxes[l] = x_sub, y_sub
-            self.ngrids[l,:] = np.array([len(x_sub), len(y_sub)])
+            self.ngrids[l,:] = np.array([len(y_sub), len(x_sub)])
 
             # parental grid
-            _nx, _ny = self.ngrids[l-1,:]
+            _ny, _nx = self.ngrids[l-1,:]
             #else:
             xx, yy = np.meshgrid(x, y)
 
@@ -213,8 +213,8 @@ class Nested2DGrid(object):
             #print(ximin, ximax, yimin, yimax, zimin, zimax)
 
             # go upper layer
-            nx, ny = self.ngrids[l-1,:] # size of the upper layer
-            d_col = np.full((nx, ny), np.nan)
+            ny, nx = self.ngrids[l-1,:] # size of the upper layer
+            d_col = np.full((ny, nx), np.nan)
 
             # insert collapsed data
             d_col[yimin:yimax+1, ximin:ximax+1] = _d
@@ -1732,12 +1732,12 @@ class Nested3DObsGrid(object):
             xmin, xmax = self.xlim[l]
             zmin, zmax = self.zlim[l]
 
-            if self.preserve_z:
-                d_plt = self.collapse(
-                    d, upto = l)[:, ny//2, :]
-            else:
-                d_plt = self.collapse(
-                    d, upto = l)[:, ny//2, :]
+            #if self.preserve_z:
+            #    d_plt = self.collapse(
+            #        d, upto = l)[:, ny//2, :]
+            #else:
+            d_plt = self.collapse(
+                d, upto = l)[:, ny//2, :]
 
             # hide parental layer
             if l <= self.nlevels-2:
