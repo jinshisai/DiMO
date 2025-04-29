@@ -177,18 +177,18 @@ class Builder(object):
         self.side = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
 
 
-    def build_model(self, dv_mode):
+    def build_model(self, dv_mode, pterm):
         T_g, n_g, vlos, dv, T_d, tau_d = self.model.build(
             self.Rs, self.phs, self.zps, self.Rmid,
-            dv_mode = dv_mode, mmol = self.mmol)
+            dv_mode = dv_mode, mmol = self.mmol, pterm = pterm)
         return T_g, n_g, vlos, dv, T_d, tau_d
 
 
     def build_cube(self, 
         Tcmb = 2.73, f0 = 230., 
         dist = 140., dv_mode = 'total', 
-        contsub = True, return_Ttau = False):
-        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode = dv_mode)
+        pterm = True, contsub = True, return_Ttau = False):
+        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode = dv_mode, pterm = pterm)
 
         # dust
         #T_d = self.grid2D.collapse(T_d)

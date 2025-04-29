@@ -191,9 +191,30 @@ class MultiLayerDisk:
         return vkep(R * auTOcm, self.ms * Msun, z * auTOcm) * 1.e-5 # cm/s --> km/s
 
 
-    def gas_velocity(self, R, phi, z):
+    def _gas_velocity_old(self, R, phi, z):
         return vkep(R * auTOcm, self.ms * Msun, z * auTOcm) *\
          np.cos(phi) * np.sin(self._inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
+
+
+    def gas_velocity(self, R, phi, z, T, pterm = True, mu = 2.34):
+        '''
+        Calculate line-of-sight velocity, i.e., 
+        projection of the rotational velocity.
+
+        Parameters
+        ----------
+        R (array): Cylindarical radius (au)
+        phi (array): Azimuthal angle (rad)
+        z (array): Height (au)
+        T (array): Gas temperature (K)
+        pterm (bool): If include the pressure gradient term or not.
+        '''
+        #vphi = vrot(R * auTOcm, self.ms * Msun, rho, T,
+        #    z = z * auTOcm, pterm = pterm, mu = mu,)
+        vphi = vrot_ssdisk(R * auTOcm, self.ms * Msun, T, 
+            self.rc_g * auTOcm, self.gamma_g, self.qg, 
+            z = z * auTOcm, pterm = pterm, mu = mu)
+        return vphi * np.cos(phi) * np.sin(self._inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
 
 
     def speed_to_velocity(self, gs, phi,):
@@ -273,14 +294,17 @@ class MultiLayerDisk:
 
 
     def build(self, R, phi, z, Rmid, 
-        dv_mode = 'total', collapse = False, mmol = 2.34):
+        dv_mode = 'total', collapse = False, 
+        mmol = 30., mu = 2.34, pterm = True,):
         '''
         deproject_grid frist.
         '''
         # gas
         T_g = self.gas_temperature(R)
         n_g = self.gas_density(R, z)
-        vlos = self.gas_velocity(R, phi, z)
+        #vlos = self.gas_velocity(R, phi, z)
+        vlos = self.gas_velocity(R, phi, z, T_g, 
+            pterm = pterm, mu = mu)
         dv = self.linewidth(R, dv_mode = dv_mode, Tg = T_g, mmol = mmol)
 
         # dust
@@ -291,9 +315,10 @@ class MultiLayerDisk:
 
 
     def build_cube(self, Tcmb = 2.73, f0 = 230., 
-        dist = 140., dv_mode = 'total', contsub = True,
+        dist = 140., dv_mode = 'total', pterm = True, 
+        contsub = True,
         return_Ttau = False, rin = 0.1):
-        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(rin = rin, dv_mode = dv_mode)
+        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(rin = rin, dv_mode = dv_mode, pterm = pterm)
 
         # dust
         T_d = self.grid2D.collapse(T_d)
@@ -1412,6 +1437,48 @@ def sky_to_local(x, y, inc, pa, fz, zargs, dfz = None,
 
 def vkep(r, ms, z = 0.):
     return np.sqrt(Ggrav * ms * r * r / (r*r + z*z)**(1.5))
+
+
+def vrot2_r(r, ms, rho, cs2, z = 0.):
+    '''
+    Calculate vrot^2 / r taking into account height and pressure gradient.
+
+    Parameters
+    ----------
+    r (float or array): Cylinderical radius (cm)
+    ms (float): Stellar mass (g)
+    rho (float or array): Surface or volume density (g cm^-3 or g cm^-2).
+    '''
+    #cs2 = cs**2.
+    rho_grad = np.gradient(np.log(rho), r)
+    cs_grad = np.gradient(cs2, r)
+    return vkep(r, ms, z=z)**2. / r + cs2 * rho_grad + cs_grad
+
+
+def vrot(r, ms, rho, T, z = 0., pterm = True, mu = 2.34):
+    if pterm:
+        cs2 = kb * T / mu / mH
+        return np.sqrt(vrot2_r(r, ms, rho, cs2, z = z) * r)
+    else:
+        return vkep(r, ms, z = z)
+
+
+def vrot_ssdisk(r, ms, T, rc, gamma, q,
+    z = 0., pterm = True, mu = 2.34):
+    '''
+    The pressure gradient term will be analytically calculated
+    '''
+    if pterm:
+        cs2 = kb * T / mu / mH
+        vkep2 = vkep(r, ms, z = z)**2.
+        vrot2 = vkep2 - cs2 * ((2.-gamma) * (r/rc)**(2.-gamma) + q + gamma)
+        #plt.scatter(r.ravel()[::100]/auTOcm, np.sqrt(vkep2.ravel()[::100]) * 1e-5)
+        #plt.scatter(r.ravel()[::100]/auTOcm, np.sqrt(vrot2.ravel()[::100]) * 1e-5)
+        #plt.show()
+        #plt.close()
+        return np.sqrt(vrot2)
+    else:
+        return vkep(r, ms, z = z)
 
 
 # Planck function

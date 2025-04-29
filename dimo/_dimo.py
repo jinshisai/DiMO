@@ -972,8 +972,8 @@ class DiMO(object):#, FitThinModel):
     # define fitting function
     def fit_multilayer_model(self, params, pranges, 
         d, derr, x, y, z, v,
-        Tcmb = 2.73, f0 = 230., dv_mode = 'total',
-        outname = 'modelfitter_results', nwalkers=None, 
+        Tcmb = 2.73, f0 = 230., dv_mode = 'total', 
+        pterm = False, outname = 'modelfitter_results', nwalkers=None, 
         nrun=2000, nburn=1000, labels=[], show_progress=True, 
         optimize_ini=False, moves = emcee.moves.StretchMove(), 
         symmetric_error=False, npool = 1, f_rand_init = 1.,
@@ -1075,7 +1075,7 @@ class DiMO(object):#, FitThinModel):
             # cube on the original grid
             modelcube = _model.build_cube(
                 Tcmb = Tcmb, f0 = f0, dist = self.dist, 
-                dv_mode = dv_mode,)
+                dv_mode = dv_mode, pterm = pterm)
 
             return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
 
