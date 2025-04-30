@@ -32,6 +32,357 @@ auTOcm = units.au.to('cm') # 1 au (cm)
 
 
 @dataclass(slots=True)
+class TwoComponentDisk:
+    '''
+    Two-component Disk Model which consists of a thick gas layer and a thin dust layer.
+    The thickness of gas is taken into account in the radiative transfer calculation using
+    the channel-based three-layer approximation.
+    '''
+
+    # params for dust layer
+    Td0: float = 400.
+    qd: float = 0.5
+    log_tau_dc: float = 0. # tau of dust at rc
+    rc_d: float = 1.
+    gamma_d: float = 1.
+    # params for gas layer
+    Tg0: float = 400. # Gas temperature at r0
+    qg: float = 0.5 # power-law index of temperature distribution
+    log_N_gc: float = 0.
+    rc_g: float = 1.
+    gamma_g: float = 1.
+    # geometry & velocity
+    inc: float = 0.
+    pa: float = 0.
+    ms: float = 1.
+    vsys: float = 0.
+    # positional offsets
+    dx0: float = 0.
+    dy0: float = 0.
+    # reference radius
+    r0: float = 1.
+    # line width
+    dv: float = 0.
+    pdv: float = 0.25
+
+
+    # hidden parameters
+    _inc_rad: float = np.radians(inc)
+    _pa_rad: float = np.radians(pa)
+    _side: int = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
+
+
+    def set_params(self, 
+        Td0 = 400., qd = 0.5, log_tau_dc = 0., rc_d = 100., gamma_d = 1., 
+        Tg0 = 400., qg = 0.5, log_N_gc = 0., rc_g = 100., gamma_g = 1., 
+        inc = 0., pa = 0., ms = 1., vsys = 0, 
+        dx0=0., dy0=0., r0 = 1., dv = 0., pdv = 0.25):
+        '''
+
+        Parameters
+        ----------
+         Td0
+         qd
+         Tg0 (float): K
+         qg (float):
+         z0 (float): au
+         hp (float):
+         r0 (float): au
+         tau_dc (float):
+         rc_d (float): au
+         gamma_d (float):
+         tau_gc (float):
+         rc_g (float): au
+         gamma_g (float):
+         inc (float): deg
+         pa (float): deg
+         ms (float): Msun
+         vsys (float): km/s
+        '''
+        # initialize parameters
+        # dust layer
+        self.Td0 = Td0
+        self.qd  = qd
+        self.log_tau_dc = log_tau_dc
+        self.rc_d = rc_d
+        self.gamma_d = gamma_d
+        # gas layer
+        self.Tg0 = Tg0 # gas temperature
+        self.qg = qg
+        self.log_N_gc = log_N_gc
+        self.rc_g = rc_g
+        self.gamma_g = gamma_g
+        # geometry & velocity
+        self.inc = inc
+        self.pa = pa
+        self.ms = ms
+        self.vsys = vsys
+        # positional offsets
+        self.dx0 = dx0
+        self.dy0 = dy0
+        # reference radius
+        self.r0 = r0
+        # line width
+        self.dv = dv
+        self.pdv = pdv
+
+
+        # hidden parameters
+        self._inc_rad = np.radians(inc)
+        self._pa_rad = np.radians(pa)
+        self._side = np.sign(np.cos(self._inc_rad)) # cos(-i) = cos(i)
+
+
+    @classmethod
+    def get_paramkeys(cls):
+        paramkeys = list(cls.get_annotations().keys())
+        paramkeys = [i for i in paramkeys if i[0] != '_']
+        return paramkeys
+
+
+    @classmethod
+    def get_annotations(cls):
+        d = {}
+        for c in cls.mro():
+            try:
+                d.update(**c.__annotations__)
+            except AttributeError:
+                # object, at least, has no __annotations__ attribute.
+                pass
+        return d
+
+
+    def print_params(self):
+        fields = dataclasses.fields(self)
+        for v in fields:
+            print(f'{v.name}: ({v.type.__name__}) = {getattr(self, v.name)}')
+
+
+    def gas_temperature(self, R):
+        # calculate T(R) & tau(R)
+        # temperature
+        T = self.Tg0 * (R / self.r0)**(-self.qg)
+        T[np.isnan(T)] = 1. # to prevent computational errors
+        T[T <= 1] = 1. # safty net
+        return T
+
+
+    def dust_temperature(self, R):
+        # calculate T(R) & tau(R)
+        # temperature
+        T = self.Td0 * (R / self.r0)**(-self.qd)
+        T[np.isnan(T)] = 1. # to prevent computational errors
+        T[T <= 1] = 1. # safty net
+        return T
+
+
+    def gas_speed(self, R, z):
+        return vkep(R * auTOcm, self.ms * Msun, z * auTOcm) * 1.e-5 # cm/s --> km/s
+
+
+    def _gas_velocity_old(self, R, phi, z):
+        return vkep(R * auTOcm, self.ms * Msun, z * auTOcm) *\
+         np.cos(phi) * np.sin(self._inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
+
+
+    def gas_velocity(self, R, phi, z, T, pterm = True, mu = 2.34):
+        '''
+        Calculate line-of-sight velocity, i.e., 
+        projection of the rotational velocity.
+
+        Parameters
+        ----------
+        R (array): Cylindarical radius (au)
+        phi (array): Azimuthal angle (rad)
+        z (array): Height (au)
+        T (array): Gas temperature (K)
+        pterm (bool): If include the pressure gradient term or not.
+        '''
+        #vphi = vrot(R * auTOcm, self.ms * Msun, rho, T,
+        #    z = z * auTOcm, pterm = pterm, mu = mu,)
+        vphi = vrot_ssdisk(R * auTOcm, self.ms * Msun, T, 
+            self.rc_g * auTOcm, self.gamma_g, self.qg, 
+            z = z * auTOcm, pterm = pterm, mu = mu)
+        return vphi * np.cos(phi) * np.sin(self._inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
+
+
+    def speed_to_velocity(self, gs, phi,):
+        return gs * np.cos(phi) * np.sin(self._inc_rad)
+
+
+    def gas_density(self, R, z, mu = 2.34):
+        # surface density
+        N_g = ssdisk(R, 10.**self.log_N_gc, self.rc_g, self.gamma_g, beta = None)
+
+        # scale height
+        _cs = np.sqrt(kb * self.Tg0 / mu / mH) # scale height at r0
+        _Omega = np.sqrt(Ggrav * self.ms * Msun / (self.r0*auTOcm)**3. )
+        h0 = _cs/_Omega / auTOcm # in au
+        ph = - 0.5 * self.qg + 1.5
+        h = h0 * (R / self.r0)**(ph)
+        #print(h0, ph,)
+        #print(np.nanmin(h), np.nanmax(h))
+
+        # density
+        ng = self.puff_up_layer(N_g, R, z, h) / auTOcm # cm^-3
+        return ng
+
+
+    def _puff_up_layer_old(self, sig, z, z0, H):
+        return sig * np.exp( - (z - z0)**2. / (2.*H*H)) / np.sqrt(2. * np.pi) / H
+
+
+    def puff_up_layer(self, sig, R, z, H):
+        '''
+        Without approximation of z<<R.
+        '''
+        rho0 = sig / np.sqrt(2. * np.pi) / H
+        exp = np.exp(R**2. / H**2. * ((1. + z**2/R**2)**(-0.5) - 1.))
+        return rho0 * exp
+
+
+    def linewidth(self, R, Tg = None, dv_mode = 'thermal', mmol = 2.34):
+        # line width
+        if dv_mode == 'thermal':
+            vth = np.sqrt(2. * kb * Tg / mmol / mH) * 1.e-5 # km/s
+            if self.dv > 0.:
+                vnth = self.dv * (R / self.r0)**(- self.pdv)
+                dv = np.sqrt(vth * vth + vnth * vnth)
+            else:
+                dv = np.sqrt(vth * vth)
+        elif dv_mode == 'total':
+            dv = self.dv * (R / self.r0)**(- self.pdv) if self.dv > 0. else self.dv
+        else:
+            print('ERROR\tbuild_gas_layer: dv_mode must be thermal or total.')
+            print("ERROR\tbuild_gas_layer: Ignore the input and assume dv is the total line width.")
+            dv = self.dv * (R / self.r0)**(- self.pdv) if self.dv > 0. else self.dv
+
+        return dv
+
+
+    def dust_density(self, R,):
+        return ssdisk(R, 10.**self.log_tau_dc, self.rc_d, self.gamma_d, beta = None)
+
+
+    def build(self, R, phi, z, Rmid, 
+        dv_mode = 'total', collapse = False, 
+        mmol = 30., mu = 2.34, pterm = True,):
+        '''
+        deproject_grid frist.
+        '''
+        # gas
+        T_g = self.gas_temperature(R)
+        n_g = self.gas_density(R, z)
+        #vlos = self.gas_velocity(R, phi, z)
+        vlos = self.gas_velocity(R, phi, z, T_g, 
+            pterm = pterm, mu = mu)
+        dv = self.linewidth(R, dv_mode = dv_mode, Tg = T_g, mmol = mmol)
+
+        # dust
+        T_d = self.dust_temperature(Rmid)
+        tau_d = self.dust_density(Rmid)
+
+        return T_g, n_g, vlos, dv, T_d, tau_d
+
+
+    def build_cube(self, Tcmb = 2.73, f0 = 230., 
+        dist = 140., dv_mode = 'total', pterm = True, 
+        contsub = True,
+        return_Ttau = False, rin = 0.1):
+        T_g, vlos, n_gf, n_gr, T_d, tau_d, dv = self.build(rin = rin, dv_mode = dv_mode, pterm = pterm)
+
+        # dust
+        T_d = self.grid2D.collapse(T_d)
+        tau_d = self.grid2D.collapse(tau_d)
+
+        # To cube
+        #  calculate column density and density-weighted temperature 
+        #  of each gas layer at every velocity channel.
+        if (self.dv > 0.) | (dv_mode == 'thermal'):
+            # line profile function
+            lnprofs = spectra.glnprof_series(self.v, vlos, dv)
+
+            # get nv
+            #start = time.time()
+            nv_cube = linecube.to_xyzv(
+                np.array([n_gf, n_gr]), lnprofs)
+            #end = time.time()
+            #print('to_xyzv takes %.2f'%(end-start))
+
+            # collapse
+            #start = time.time()
+            T_g = self.grid.collapse(T_g)
+            nv_gf = self.grid.high_dimensional_collapse(nv_cube[0,:,:], fill = 'zero')
+            nv_gr = self.grid.high_dimensional_collapse(nv_cube[1,:,:], fill = 'zero')
+            #end = time.time()
+            #print('collapsing takes %.2f'%(end-start))
+
+            # to cube
+            Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
+                transfer.Tnv_to_cube(
+                T_g, nv_gf, nv_gr,
+                self.grid.dz * auTOcm,
+                self.freq, self.Aul, self.Eu, self.gu, self.Qgrid),
+                (0,1,3,2,))
+        else:
+            Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
+            Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
+            (0,1,3,2,))
+
+        Tv_gf = Tv_gf.clip(1., None) # safety net to avoid zero division
+        Tv_gr = Tv_gr.clip(1., None)
+
+
+        # density to tau
+        #print('Tv_gf max, q: %13.2e, %.2f'%(np.nanmax(Tv_gf), self.qg))
+        #print('Nv_gf max: %13.2e'%(np.nanmax(Nv_gf)))
+        #if (self.line is not None) * (self.iline is not None):
+        #    tau_v_gf = self.mol.get_tau(self.line, self.iline, 
+        #        Nv_gf, Tv_gf, delv = None, grid_approx = True)
+        #    tau_v_gr = self.mol.get_tau(self.line, self.iline, 
+        #        Nv_gr, Tv_gr, delv = None, grid_approx = True)
+        #else:
+        #    # ignore temperature effect on conversion from column density to tau
+        #    tau_v_gf = Nv_gf
+        #    tau_v_gr = Nv_gr
+        #print('tau_v_gf max: %13.2e'%(np.nanmax(tau_v_gf)))
+
+
+        if return_Ttau:
+            return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
+
+        # radiative transfer
+        _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
+            dist = dist, au = True)
+        #_Bv = lambda T, v: Bv(T, v)
+        _Bv_cmb = _Bv(Tcmb, f0)
+        _Bv_gf  = _Bv(Tv_gf, f0)
+        _Bv_gr  = _Bv(Tv_gr, f0)
+        _Bv_d   = _Bv(T_d, f0)
+        Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
+            tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
+
+        if contsub == False:
+            Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
+            Iv_d = np.tile(Iv_d, (self.nv,1,1,))
+            Iv += Iv_d # add continuum back
+
+        # Convolve beam if given
+        #print('I_v_nobeam max: %13.2e'%(np.nanmax(Iv)))
+        if self.beam is not None:
+            Iv = beam_convolution(self.grid2D.xx.copy(), self.grid2D.yy.copy(), Iv, 
+                self.beam, self.gaussbeam)
+
+        #print('I_v max: %13.2e'%(np.nanmax(Iv)))
+        return Iv
+
+
+    def side(self):
+        return self._side
+
+
+
+@dataclass(slots=True)
 class MultiLayerDisk:
     '''
     Multi-layer Disk Model where thickness of gas layers are taken into account with

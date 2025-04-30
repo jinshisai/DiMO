@@ -276,10 +276,11 @@ class Builder(object):
 
 
     def show_model_sideview(self, 
-        dv_mode='total', cmap = 'viridis', 
+        dv_mode='total', pterm = True, cmap = 'viridis', 
         savefig = False, showfig = True, 
         outname = 'model_sideview', vmax = 0.90, vmin = 0.):
-        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode=dv_mode)
+        T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(
+            dv_mode=dv_mode, pterm = pterm)
         #n_g = self.grid.collapse(n_g)
 
         vmax *= np.nanmax(n_g)
