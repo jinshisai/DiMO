@@ -1042,7 +1042,9 @@ class DiMO(object):#, FitThinModel):
         # make grid
         model.set_model(self._params_ini)
         model.deproject_grid()
-        model.show_model_sideview(showfig = False, savefig = True, cmap = 'coolwarm')
+        model.show_model_sideview(
+            showfig = False, savefig = True, cmap = 'coolwarm',
+            dv_mode = dv_mode, pterm = pterm)
 
 
         # define fitting function
