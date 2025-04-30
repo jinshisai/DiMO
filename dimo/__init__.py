@@ -1,6 +1,7 @@
 # import model
 from ._dimo import DiMO, FitThinModel
-from .models import ThreeLayerDisk, SingleLayerDisk, MultiLayerDisk, SSDisk
+from .models import ThreeLayerDisk, SingleLayerDisk, \
+MultiLayerDisk, SSDisk, MultiLayerRingDisk, TwoComponentDisk
 from .builder import Builder, Builder_SSDisk
 from . import models
 from . import mpe
@@ -10,4 +11,4 @@ from . import libcube
 
 __all__ = ['DiMO', 'FitThinModel', 'Builder', 'Builder_SSDisk',
 'MultiLayerDisk', 'ThreeLayerDisk', 'SingleLayerDisk', 'SSDisk',
-'models', 'mpe', 'grid', 'libcube']
+'TwoComponentDisk', 'models', 'mpe', 'grid', 'libcube']
