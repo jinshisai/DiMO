@@ -1191,10 +1191,236 @@ class ThreeLayerDisk:
 
 @dataclass(slots=True)
 class SingleLayerDisk:
+    '''
+    Single-layer Disk Model which consists of a thin gas and dust layer.
+    '''
+
+    # params for dust layer
+    Td0: float = 300.
+    qd: float = 0.5
+    log_Sig_dc: float = 0. # Surface density of dust at rc
+    rc_d: float = 1.
+    gamma_d: float = 1.
+    # params for gas layer
+    Tg0: float = 300. # Gas temperature at r0
+    qg: float = 0.5 # power-law index of temperature distribution
+    log_N_gc: float = 0.
+    rc_g: float = 1.
+    gamma_g: float = 1.
+    # geometry & velocity
+    inc: float = 0.
+    pa: float = 0.
+    ms: float = 1.
+    vsys: float = 0.
+    # positional offsets
+    dx0: float = 0.
+    dy0: float = 0.
+    # reference radius
+    r0: float = 1.
+    # line width
+    dv: float = 0.
+    pdv: float = 0.25
+
+
+    # hidden parameters
+    _inc_rad: float = np.radians(inc)
+    _pa_rad: float = np.radians(pa)
+    _side: int = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
+
+
+    def set_params(self, 
+        Td0 = 400., qd = 0.5, log_Sig_dc = 0., rc_d = 100., gamma_d = 1., 
+        Tg0 = 400., qg = 0.5, log_N_gc = 0., rc_g = 100., gamma_g = 1., 
+        inc = 0., pa = 0., ms = 1., vsys = 0, 
+        dx0=0., dy0=0., r0 = 1., dv = 0., pdv = 0.25):
+        '''
+
+        Parameters
+        ----------
+         Td0
+         qd
+         Tg0 (float): K
+         qg (float):
+         z0 (float): au
+         hp (float):
+         r0 (float): au
+         tau_dc (float):
+         rc_d (float): au
+         gamma_d (float):
+         tau_gc (float):
+         rc_g (float): au
+         gamma_g (float):
+         inc (float): deg
+         pa (float): deg
+         ms (float): Msun
+         vsys (float): km/s
+        '''
+        # initialize parameters
+        # dust layer
+        self.Td0 = Td0
+        self.qd  = qd
+        self.log_Sig_dc = log_Sig_dc
+        self.rc_d = rc_d
+        self.gamma_d = gamma_d
+        # gas layer
+        self.Tg0 = Tg0 # gas temperature
+        self.qg = qg
+        self.log_N_gc = log_N_gc
+        self.rc_g = rc_g
+        self.gamma_g = gamma_g
+        # geometry & velocity
+        self.inc = inc
+        self.pa = pa
+        self.ms = ms
+        self.vsys = vsys
+        # positional offsets
+        self.dx0 = dx0
+        self.dy0 = dy0
+        # reference radius
+        self.r0 = r0
+        # line width
+        self.dv = dv
+        self.pdv = pdv
+
+
+        # hidden parameters
+        self._inc_rad = np.radians(inc)
+        self._pa_rad = np.radians(pa)
+        self._side = np.sign(np.cos(self._inc_rad)) # cos(-i) = cos(i)
+
+
+    @classmethod
+    def get_paramkeys(cls):
+        paramkeys = list(cls.get_annotations().keys())
+        paramkeys = [i for i in paramkeys if i[0] != '_']
+        return paramkeys
+
+
+    @classmethod
+    def get_annotations(cls):
+        d = {}
+        for c in cls.mro():
+            try:
+                d.update(**c.__annotations__)
+            except AttributeError:
+                # object, at least, has no __annotations__ attribute.
+                pass
+        return d
+
+
+    def print_params(self):
+        fields = dataclasses.fields(self)
+        for v in fields:
+            print(f'{v.name}: ({v.type.__name__}) = {getattr(self, v.name)}')
+
+
+    def gas_temperature(self, R):
+        # calculate T(R) & tau(R)
+        # temperature
+        T = self.Tg0 * (R / self.r0)**(-self.qg)
+        T[np.isnan(T)] = 1. # to prevent computational errors
+        T[T <= 1] = 1. # safty net
+        return T
+
+
+    def dust_temperature(self, R):
+        # calculate T(R) & tau(R)
+        # temperature
+        T = self.Td0 * (R / self.r0)**(-self.qd)
+        T[np.isnan(T)] = 1. # to prevent computational errors
+        T[T <= 1] = 1. # safty net
+        return T
+
+
+    def gas_speed(self, R, z):
+        return vkep(R * auTOcm, self.ms * Msun, z * auTOcm) * 1.e-5 # cm/s --> km/s
+
+
+    def gas_velocity(self, R, phi, z, T, pterm = True, mu = 2.34):
+        '''
+        Calculate line-of-sight velocity, i.e., 
+        projection of the rotational velocity.
+
+        Parameters
+        ----------
+        R (array): Cylindarical radius (au)
+        phi (array): Azimuthal angle (rad)
+        z (array): Height (au)
+        T (array): Gas temperature (K)
+        pterm (bool): If include the pressure gradient term or not.
+        '''
+        #vphi = vrot(R * auTOcm, self.ms * Msun, rho, T,
+        #    z = z * auTOcm, pterm = pterm, mu = mu,)
+        vphi = vrot_ssdisk(R * auTOcm, self.ms * Msun, T, 
+            self.rc_g * auTOcm, self.gamma_g, self.qg, 
+            z = z * auTOcm, pterm = pterm, mu = mu)
+        return vphi * np.cos(phi) * np.sin(self._inc_rad) * 1.e-5 + self.vsys # cm/s --> km/s
+
+
+    def speed_to_velocity(self, gs, phi,):
+        return gs * np.cos(phi) * np.sin(self._inc_rad)
+
+
+    def gas_density(self, R, mu = 2.34):
+        # surface density
+        return ssdisk(R, 10.**self.log_N_gc, self.rc_g, self.gamma_g, beta = None)
+
+
+    def linewidth(self, R, Tg = None, dv_mode = 'thermal', mmol = 2.34):
+        # line width
+        if dv_mode == 'thermal':
+            vth = np.sqrt(2. * kb * Tg / mmol / mH) * 1.e-5 # km/s
+            if self.dv > 0.:
+                vnth = self.dv * (R / self.r0)**(- self.pdv)
+                dv = np.sqrt(vth * vth + vnth * vnth)
+            else:
+                dv = np.sqrt(vth * vth)
+        elif dv_mode == 'total':
+            dv = self.dv * (R / self.r0)**(- self.pdv) if self.dv > 0. else self.dv
+        else:
+            print('ERROR\tbuild_gas_layer: dv_mode must be thermal or total.')
+            print("ERROR\tbuild_gas_layer: Ignore the input and assume dv is the total line width.")
+            dv = self.dv * (R / self.r0)**(- self.pdv) if self.dv > 0. else self.dv
+
+        return dv
+
+
+    def dust_density(self, R,):
+        return ssdisk(R, 10.**self.log_Sig_dc, self.rc_d, self.gamma_d, beta = None)
+
+
+    def build(self, R, phi, 
+        z = 0., Rmid = None,
+        dv_mode = 'total',
+        mmol = 30., mu = 2.34, pterm = False,):
+        '''
+        deproject_grid frist.
+        '''
+        if Rmid is None:
+            Rmid = R
+
+        # gas
+        T_g = self.gas_temperature(R)
+        N_g = self.gas_density(R)
+        #vlos = self.gas_velocity(R, phi, z)
+        vlos = self.gas_velocity(R, phi, z, T_g, 
+            pterm = pterm, mu = mu)
+        dv = self.linewidth(R, dv_mode = dv_mode, Tg = T_g, mmol = mmol)
+
+        # dust
+        T_d = self.dust_temperature(Rmid)
+        Sig_d = self.dust_density(Rmid)
+
+        return T_g, N_g, vlos, dv, T_d, Sig_d
+
+
+
+@dataclass(slots=True)
+class SingleLayerDisk_old:
 
     # params for the disk
     # whichever gas or dust
-    T0: float = 400. # temperature
+    T0: float = 300. # temperature
     q: float = 0.5   # slope of temperature prof
     log_tau_c: float = 0. # tau at rc
     rc: float = 100.
@@ -1830,6 +2056,23 @@ def vrot_ssdisk(r, ms, T, rc, gamma, q,
         return np.sqrt(vrot2)
     else:
         return vkep(r, ms, z = z)
+
+
+def Tdisk_D20(r, z, T0mid, qmid, T0atm, qatm, 
+    z0, alpha, beta, r0 = 100.):
+    '''
+
+    r (float or array): Radius in an arbitoral unit
+    z (float or array): Height
+
+    '''
+    Tatm = T0atm * (r/r0)**(-qatm)
+    Tmid = T0mid * (r/r0)**(-qmid)
+    zq = z0 * (r/r0)**beta
+
+    tanh = np.tanh((z - alpha * zq) / zq)
+    T4 = Tmid**4. + 0.5 * (1. + tanh) * Tatm**4.
+    return T4**0.25
 
 
 # Planck function

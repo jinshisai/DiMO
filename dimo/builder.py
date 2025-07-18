@@ -615,8 +615,18 @@ class Builder_SSDisk(object):
 
 
 
-    def build_cube(self, build_args =  None):
-        I_int, vlos, dv = self.build_model(build_args)
+    def build_cube(self, 
+        build_args =  None,
+        I_pre = None, vlos_pre = None, dv_pre = None):
+        # model build
+        _I_int, _vlos, _dv = self.build_model(build_args)
+        # if any pre-calculations are provided or not
+        I_int = _I_int if I_pre is None else I_pre
+        vlos = _vlos if vlos_pre is None else vlos_pre
+        dv = _dv if dv_pre is None else dv_pre
+        #print(I_int.shape, dv.shape)
+
+        # calculate sky projection
         self.project_grid()
 
         ''' new version; line profile first
@@ -638,6 +648,172 @@ class Builder_SSDisk(object):
         lnprofs = spectra.glnprof_series(self.v, v_proj, dv_proj) # x,y,v
         Iv = np.tile(I_proj, (self.nv, 1,)) * lnprofs
         #'''
+
+        # collapse
+        Iv = self.skygrid.high_dimensional_collapse(Iv, 
+            fill = 'zero',
+            collapse_mode = 'mean')
+
+        # Convolve beam if given
+        if self.beam is not None:
+            Iv = beam_convolution(
+                self.skygrid.xx.copy(), 
+                self.skygrid.yy.copy(), Iv, 
+                self.beam, self.gaussbeam)
+
+        return Iv
+
+
+    def visualize_grid(self, 
+        keys = ['intensity', 'vlos', 'dv'], savefig = False,
+        showfig = True, outname = None, cmap = 'viridis',
+        build_args = None):
+        # visualize grid
+        I_int, vlos, dv = self.build_model(build_args)
+        self.project_grid()
+
+        qs = []
+        for q, l in zip([I_int, vlos, dv], 
+            ['intensity', 'vlos', 'dv']):
+            if l in keys:
+                _q = self.project_quantity(q)
+                if l == 'intensity':
+                    _q = np.log10(_q)
+                    _q[_q < 0.] = np.nan
+                qs.append(_q)
+
+        for q, l in zip(qs, keys):
+            fig = plt.figure()
+            ax = fig.add_subplot(111)
+            _outname = outname + '_%s.png'%l if outname is not None else None
+            self.skygrid.visualize_grid(q, ax = ax,
+                showfig = False, savefig = False,
+                outname = _outname, cmap = cmap)
+            ax.text(0.1, 0.9, l, transform = ax.transAxes, ha = 'left', va = 'top')
+            if savefig: fig.savefig(outname + '_%s.png'%l, dpi = 300)
+            if showfig: plt.show()
+            plt.close()
+
+
+class Builder_SLD(Builder_SSDisk):
+    '''
+    Builder for Two-Layer Disk Model.
+
+    '''
+
+    def __init__(self, model,
+        axes_model: list, axes_sky: list, 
+        xlim: list | None = None, ylim: list | None = None,
+        nsub: list | None = None, reslim: float = 10,
+        beam: list | None = None,
+        coordinate_type: str = 'polar',
+        line: str | None = None, iline: int | None = None, 
+        dust_opacity: float = None,
+        Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,):
+        '''
+        Set up model grid and initialize model.
+
+        Parameters
+        ----------
+        axes (list of axes): Three dimensional coordinates aligned plane of sky (au).
+        '''
+        super().__init__(model, axes_model = axes_model,
+            axes_sky = axes_sky, xlim = xlim, ylim = ylim,
+            nsub = nsub, reslim = reslim, beam = beam,
+            coordinate_type = coordinate_type,)
+        #super().__init__()
+
+        # line
+        self.line = line
+        self.iline = iline
+        if (line is not None) * (iline is not None):
+            self.mol = Molecule(line)
+            self.mol.moldata[line].partition_grid(Tmin, Tmax, nTex, scale = 'linear')
+            self.mmol = self.mol.moldata[line].weight
+            self.Qgrid = (self.mol.moldata[line]._Tgrid, self.mol.moldata[line]._PFgrid)
+            self.trans, self.freq, self.Aul, self.gu, self.gl, self.Eu, self.El = \
+            self.mol.moldata[line].params_trans(iline)
+
+        # dust
+        self.kappa = dust_opacity
+
+
+    def build_model(self, build_args = None):
+        if build_args is not None:
+            T_g, N_g, vlos, dv, T_d, Sig_d = self.model.build(self.rs, self.phis, *build_args)
+        else:
+            T_g, N_g, vlos, dv, T_d, Sig_d = self.model.build(self.rs, self.phis,)
+        return T_g, N_g, vlos, dv, T_d, Sig_d
+
+
+    def build_cube(self,
+        build_args =  None,
+        Tcmb = 2.73, dist = 140., f0 = None, contsub = True,
+        Ng_pre = None, Tg_pre = None, vlos_pre = None, 
+        Td_pre = None, Sigd_pre = None, dv_pre = None,
+        return_tau = False):
+        # model build
+        _T_g, _N_g, _vlos, _dv, _T_d, _Sig_d = self.build_model(build_args)
+        # if any pre-calculations are provided or not
+        Ng = _N_g if Ng_pre is None else Ng_pre
+        Tg = _T_g if Tg_pre is None else Tg_pre
+        vlos = _vlos if vlos_pre is None else vlos_pre
+        Td = _T_d if Td_pre is None else Tg_pre
+        Sigd = _Sig_d if Sigd_pre is None else Sigd_pre
+        dv = _dv if dv_pre is None else dv_pre
+
+        # calculate sky projection
+        self.project_grid()
+
+        # projection
+        Ng_proj = self.project_quantity(Ng)
+        Tg_proj = self.project_quantity(Tg)
+        Sigd_proj = self.project_quantity(Sigd)
+        Td_proj = self.project_quantity(Td)
+        v_proj = self.project_quantity(vlos)
+        dv_proj = self.project_quantity(dv)
+        #print(v_proj, dv_proj)
+
+        # line profile function
+        lnprofs = spectra.glnprof_series(self.v, v_proj, dv_proj, unit_scale = 1.e-5) # x,y,v
+        Ng_v = np.tile(Ng_proj, (self.nv, 1,)) * lnprofs
+        Tg_v = np.tile(Tg_proj, (self.nv, 1,)) #* lnprofs
+        Sigd_v = np.tile(Sigd_proj, (self.nv, 1,)) #* lnprofs
+        Td_v = np.tile(Td_proj, (self.nv, 1,)) #* lnprofs
+
+        # Nv to tau_v
+        tau_v_g = transfer.Nv_to_tauv(
+                    Tg_v, Ng_v, 
+                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+        Tg_v = Tg_v.clip(1., None)
+        tau_v_d = Sigd_v * self.kappa
+
+        if return_tau:
+            # collapse
+            Iv = self.skygrid.high_dimensional_collapse(tau_v_g, 
+                fill = 'zero',
+                collapse_mode = 'mean')
+            return Iv
+
+        # radiative transfer
+        _Bv = lambda T, v: Bvppx(T, v, 
+            self.skygrid.dx, self.skygrid.dy, 
+            dist = dist, au = True) # in unit of Jy/pixel with the final pixel size
+        if f0 is None:
+            f0 = self.freq * 1.e-9
+        _Bv_cmb = _Bv(Tcmb, f0)
+        _Bv_g = _Bv(Tg_v, f0)
+        _Bv_d = _Bv(Td_v, f0)
+        #Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
+        #    tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
+        Iv = _Bv_cmb * ( - 1. + np.exp(- tau_v_g - tau_v_d)) \
+        + _Bv_d * (1. - np.exp(-tau_v_d)) * np.exp(- tau_v_g) \
+        + _Bv_g * (1. - np.exp(-tau_v_g))
+
+        # contsub
+        if contsub:
+            Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_v_d))
+            Iv -= Iv_d # add continuum back
 
         # collapse
         Iv = self.skygrid.high_dimensional_collapse(Iv, 

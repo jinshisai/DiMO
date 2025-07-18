@@ -1014,22 +1014,84 @@ class DiMO(object):#, FitThinModel):
             else:
                 return exp
 
+        # fitting function
+        if self.n_subgrid > 1:
+            # subgrid
+            subgrid = SubGrid2D(x, y, nsub=self.n_subgrid)
+            _x, _y = subgrid.x_sub, subgrid.y_sub
+
+            # define fitting function
+            def fitfunc(x, y, z, v, *params):
+                # safty net
+                if np.all((pranges[0] < np.array([*params])) \
+                    * (np.array([*params]) < pranges[1])) == False:
+                    return np.zeros(
+                        (len(v), ny, nx)
+                        )[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+
+
+                # merge free parameters to fixed parameters
+                params_free = dict(zip(self.pfree_keys, [*params]))
+                _params_full = merge_dictionaries(params_free, self.params_fixed)
+
+                # update parameters
+                _model = copy.deepcopy(model) # to make sure parallel calculations go well
+                _model.set_model(_params_full)
+
+                # renew grid
+                if renew_grid:
+                    _model.deproject_grid()
+
+                # cube on the original grid
+                modelcube = _model.build_cube(
+                    Tcmb = Tcmb, f0 = f0, dist = self.dist, 
+                    dv_mode = dv_mode, pterm = pterm)
+                modelcube = subgrid.binning_onsubgrid_layered(modelcube)
+
+                return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+        else:
+            _x = x
+            _y = y
+            # define fitting function
+            def fitfunc(x, y, z, v, *params):
+                # safty net
+                if np.all((pranges[0] < np.array([*params])) \
+                    * (np.array([*params]) < pranges[1])) == False:
+                    return np.zeros(
+                        (len(v), ny, nx)
+                        )[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+
+
+                # merge free parameters to fixed parameters
+                params_free = dict(zip(self.pfree_keys, [*params]))
+                _params_full = merge_dictionaries(params_free, self.params_fixed)
+
+                # update parameters
+                _model = copy.deepcopy(model) # to make sure parallel calculations go well
+                _model.set_model(_params_full)
+
+                # renew grid
+                if renew_grid:
+                    _model.deproject_grid()
+
+                # cube on the original grid
+                modelcube = _model.build_cube(
+                    Tcmb = Tcmb, f0 = f0, dist = self.dist, 
+                    dv_mode = dv_mode, pterm = pterm)
+
+                return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
+
 
         # labels
         if len(labels) != len(params): labels = self.pfree_keys
 
 
         # setup model
-        model = Builder(x, y, z, v, 
+        model = Builder(_x, _y, z, v, 
             self.model, nsub = self.n_nest, zstrech = self.zstrech, 
             reslim = self.reslim, beam = self.beam,
             line = self.line, iline = self.iline, rin = self.rin,
             adoptive_zaxis = True, cosi_lim = 0.5,)
-        #model = self.model(x, y, z, v,
-        #    xlim = None, ylim = None, zlim = None,
-        #    nsub = self.n_nest, reslim = self.reslim,
-        #    line = self.line, iline = self.iline,
-        #    adoptive_zaxis = True, cosi_lim = 0.5, beam = self.beam,)
         model.grid.gridinfo()
 
         # renew grid every fit or not
@@ -1047,41 +1109,6 @@ class DiMO(object):#, FitThinModel):
             dv_mode = dv_mode, pterm = pterm)
 
 
-        # define fitting function
-        def fitfunc(x, y, z, v, *params):
-            # safty net
-            if np.all((pranges[0] < np.array([*params])) \
-                * (np.array([*params]) < pranges[1])) == False:
-                return np.zeros(
-                    (len(v), ny, nx)
-                    )[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
-
-
-            # merge free parameters to fixed parameters
-            params_free = dict(zip(self.pfree_keys, [*params]))
-            #print('p input')
-            #print(params_free)
-            _params_full = merge_dictionaries(params_free, self.params_fixed)
-            #params_full = list(
-            #    {k: _params_full[k] for k in self.model_keys}.values()
-            #    ) # reordered elements
-
-            # update parameters
-            _model = copy.deepcopy(model) # to make sure parallel calculations go well
-            _model.set_model(_params_full)
-
-            # renew grid
-            if renew_grid:
-                _model.deproject_grid()
-
-            # cube on the original grid
-            modelcube = _model.build_cube(
-                Tcmb = Tcmb, f0 = f0, dist = self.dist, 
-                dv_mode = dv_mode, pterm = pterm)
-
-            return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
-
-
         # fitting
         p0 = list(self.params_free.values())
         BE = BayesEstimator(axes, d_smpld, derr, fitfunc, lnlike = lnlike)
@@ -1097,8 +1124,7 @@ class DiMO(object):#, FitThinModel):
 
         # best solution
         smpl_y, smpl_x = 1, 1
-        modelcube = fitfunc(x, y, z, v, *self.popt)
-        #modelcube = fitfunc(x, y, z, v, *list(self.params_free.values()))
+        modelcube = fitfunc(_x, _y, z, v, *self.popt)
         self.modelcube = modelcube
 
         self.writeout_fitres(outname, BE.criterion)

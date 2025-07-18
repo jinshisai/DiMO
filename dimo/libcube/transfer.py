@@ -439,3 +439,39 @@ def Tnv_to_cube(Tg, nv_g, zs, dzs,
                 Tv_gr[i, j] = T_gr_sum / tau_gr
 
     return Tv_gf, Tv_gr, tau_v_gf, tau_v_gr
+
+
+
+@njit(parallel=True) # fastmath=True
+def Nv_to_tauv(T, Nv,
+    freq, Aul, Eu, gu, Qgrid):
+    """
+    Compute tau_v from N_v.
+
+    Parameters
+    ----------
+     T_g: 2D numpy array for temperature with a shape of (nv, nxy).
+     Nv_g: 2D numpy array for density with a shape of (nv, nxy).
+     freq: Frequency
+     Aul: Einstein A coefficient
+     Eu: Energy of upper state (K)
+     gu:
+     Qgrid: 
+    """
+    nv, nxy = Nv.shape
+
+    # output
+    tau_v = np.zeros((nv, nxy))
+
+    for i in prange(nv):
+        for j in range(nxy):
+            _Nv = Nv[i, j]
+            if (_Nv > 0.):
+                _T = T[i,j]
+                # partition function
+                Qrot = interp(_T, Qgrid[0], Qgrid[1])
+                # tau
+                tau_v[i, j] = nT_to_alpha(
+                    _Nv, _T, freq, Aul, Eu, gu, Qrot, 1.
+                    ) # /delv is already included in line profile function
+    return tau_v
