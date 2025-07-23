@@ -131,18 +131,24 @@ class Builder(object):
         xp = self.xs
         yp = self.ys
         zp = self.zs
+        dzp = self.grid.dznest
         # rotate by PA
-        x, y = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
+        _xp, _yp = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
         # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
         # adoptive z axis
         if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > cosi_lim):
-            # center origin of z axis in the disk midplane
-            zoffset = - np.tan(self._inc_rad) * y # zp_mid(xp, yp)
+            # consider z=0 is in the disk midplane
+            zoffset = - np.tan(self._inc_rad) * _yp # zp_mid(xp, yp)
+            #zoffset = dzp * (zoffset // dzp) # shift in steps of dz
             self.zoffset = zoffset
-            _zp = zp + zoffset # shift z center
-            x, y, z = xrot(x, y, _zp, self._inc_rad) # rot = - (-inc)
+            _zp = zp + zoffset # shift z center back to rectanglar coordinates
+            x, y, z = xrot(_xp, _yp, _zp, self._inc_rad) # rot = - (-inc)
+            #y /= np.cos(self._inc_rad)
+            #x = _xp
+            #y = _yp * np.cos(self._inc_rad) - _zp * np.sin(self._inc_rad)
+            #z = _yp * np.sin(self._inc_rad) + _zp * np.cos(self._inc_rad)
         else:
-            x, y, z = xrot(x, y, zp, self._inc_rad) # rot = - (-inc)
+            x, y, z = xrot(_xp, _yp, zp, self._inc_rad) # rot = - (-inc)
             self.zoffset = np.zeros(x.size)
 
         self.xps = x
@@ -278,12 +284,16 @@ class Builder(object):
     def show_model_sideview(self, 
         dv_mode='total', pterm = True, cmap = 'viridis', 
         savefig = False, showfig = True, 
-        outname = 'model_sideview', vmax = 0.90, vmin = 0.):
+        outname = 'model_sideview', vmax = 1.0, vmin = 1.e-5):
         T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(
             dv_mode=dv_mode, pterm = pterm)
-        #n_g = self.grid.collapse(n_g)
 
-        vmax *= np.nanmax(n_g)
+        #n_g = np.log10(n_g) # in log scale
+        n_g = self.Rs
+        #n_g = self.xps
+        vmin, vmax = np.nanmin(n_g), np.nanmax(n_g)
+        #vmax *= np.log10(np.nanmax(n_g))
+        #vmin *= np.log10(np.nanmax(n_g))
 
         #fig = plt.figure()
         #ax = fig.add_subplot(111)
@@ -299,6 +309,7 @@ class Builder(object):
             zmin, zmax = _grid.zlim[l]
 
             d_plt = _grid.collapse(n_g, upto = l)
+            #d_plt = np.log10(d_plt) # in log scale
 
             # hide parental layer
             if l <= _grid.nlevels-2:
@@ -318,12 +329,12 @@ class Builder(object):
             _xx, _yy, _zz = _grid.get_grid(l)
 
             if self.adoptive_zaxis:
-                zoff = _grid.collapse(self.zoffset, upto = l)
-                _zz += zoff
+                zoffset = _grid.collapse(self.zoffset, upto = l)
+                _zz += zoffset
 
-            ax1.pcolormesh(_zz[:, ny//2, :], _xx[:, ny//2, :], d_plt[:, ny//2, :], 
+            im1 = ax1.pcolormesh(_zz[:, ny//2, :], _xx[:, ny//2, :], d_plt[:, ny//2, :], 
                 alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
-            ax2.pcolormesh(_zz[nx//2, :, :], _yy[nx//2, :, :], d_plt[nx//2, :, :], 
+            im2 = ax2.pcolormesh(_zz[nx//2, :, :], _yy[nx//2, :, :], d_plt[nx//2, :, :], 
                 alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
             #rect = plt.Rectangle((zmin, xmin), 
             #    zmax - zmin, xmax - xmin, edgecolor = 'white', facecolor = "none",
@@ -334,9 +345,9 @@ class Builder(object):
         ax1.set_ylim(np.min(_grid.xlim[0]), np.max(_grid.xlim[0]) )
         ax2.set_ylim(_grid.ylim[0])
 
-        ax1.set_ylabel(r'$x$ (au)')
-        ax1.set_xlabel(r'$z$ (au)')
-        ax2.set_ylabel(r'$y$ (au)')
+        ax1.set_ylabel(r'$x^\prime$ (au)')
+        ax1.set_xlabel(r'$z^\prime$ (au)')
+        ax2.set_ylabel(r'$y^\prime$ (au)')
 
         fig.tight_layout()
 

@@ -48,7 +48,7 @@ class TwoComponentDisk:
     # params for gas layer
     Tg0: float = 400. # Gas temperature at r0
     qg: float = 0.5 # power-law index of temperature distribution
-    log_N_gc: float = 0.
+    log_N_gc: float = -10.
     rc_g: float = 1.
     gamma_g: float = 1.
     # geometry & velocity
@@ -74,7 +74,7 @@ class TwoComponentDisk:
 
     def set_params(self, 
         Td0 = 400., qd = 0.5, log_tau_dc = 0., rc_d = 100., gamma_d = 1., 
-        Tg0 = 400., qg = 0.5, log_N_gc = 0., rc_g = 100., gamma_g = 1., 
+        Tg0 = 400., qg = 0.5, log_N_gc = -10., rc_g = 100., gamma_g = 1., 
         inc = 0., pa = 0., ms = 1., vsys = 0, 
         dx0=0., dy0=0., r0 = 1., dv = 0., pdv = 0.25):
         '''
