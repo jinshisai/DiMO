@@ -291,9 +291,9 @@ class Builder(object):
         #n_g = np.log10(n_g) # in log scale
         #n_g = self.Rs
         #n_g = self.xps
-        vmin, vmax = np.nanmin(n_g), np.nanmax(n_g)
-        #vmax *= np.log10(np.nanmax(n_g))
-        #vmin *= np.log10(np.nanmax(n_g))
+        #vmin, vmax = np.nanmin(n_g), np.nanmax(n_g)
+        vmax *= np.log10(np.nanmax(n_g))
+        vmin *= np.log10(np.nanmax(n_g))
 
         #fig = plt.figure()
         #ax = fig.add_subplot(111)
