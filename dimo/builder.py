@@ -289,7 +289,7 @@ class Builder(object):
             dv_mode=dv_mode, pterm = pterm)
 
         #n_g = np.log10(n_g) # in log scale
-        n_g = self.Rs
+        #n_g = self.Rs
         #n_g = self.xps
         vmin, vmax = np.nanmin(n_g), np.nanmax(n_g)
         #vmax *= np.log10(np.nanmax(n_g))
@@ -309,7 +309,7 @@ class Builder(object):
             zmin, zmax = _grid.zlim[l]
 
             d_plt = _grid.collapse(n_g, upto = l)
-            #d_plt = np.log10(d_plt) # in log scale
+            d_plt = np.log10(d_plt) # in log scale
 
             # hide parental layer
             if l <= _grid.nlevels-2:
