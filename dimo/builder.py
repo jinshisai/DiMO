@@ -10,6 +10,7 @@ from astropy import constants, units
 import dataclasses
 from dataclasses import dataclass
 import time
+from scipy import special
 
 from .funcs import beam_convolution, gaussian2d, glnprof_conv
 from .grid import Nested3DObsGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
@@ -206,16 +207,24 @@ class Builder(object):
         #  of each gas layer at every velocity channel.
         if (self.model.dv > 0.) | (dv_mode == 'thermal'):
             # line profile function
+            #start = time.time()
             lnprofs = spectra.glnprof_series(self.v, 
             vlos.ravel(), dv.ravel(), unit_scale = 1.e-5)
+            #end = time.time()
+            #print('making spectra took %.2fs'%(end-start))
 
             # get nv
             #start = time.time()
-            nv_cube = linecube.to_xyzv(
-                np.array([n_g.ravel()]), lnprofs)
-            nv_g = nv_cube[0].reshape((self.nv, self.grid.nxy, self.nz))
+            #nv_cube = linecube.to_xyzv(
+            #    np.array([n_g.ravel()]), lnprofs)
+            nv_g = n_g.ravel()[np.newaxis, :] * lnprofs
+            nv_g = nv_g.reshape((self.nv, self.grid.nxy, self.nz))
+            #end = time.time()
+            #print('to xyzv took %.2fs'%(end-start))
+
 
             # to cube
+            #start = time.time()
             if self.side == 1:
                 Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnv_to_cube(
                     T_g, nv_g, self.grid.znest,
@@ -226,15 +235,8 @@ class Builder(object):
                     T_g, nv_g, self.grid.znest,
                     self.grid.dznest * auTOcm,
                     self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
-
-            # collapse first
-            #Tv_gf = self.grid.collapse2D(Tv_gf)
-            #Tv_gr = self.grid.collapse2D(Tv_gr)
-            #tau_v_gf = self.grid.collapse2D(tau_v_gf)
-            #tau_v_gr = self.grid.collapse2D(tau_v_gr)
-            # v, x, y to v, y, x
-            #Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = np.transpose(
-            #    np.array([Tv_gf, Tv_gr, tau_v_gf, tau_v_gr]), axes = (0,1,3,2))
+            #end = time.time()
+            #print('to cube took %.2fs'%(end-start))
         else:
             Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
             Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
@@ -252,15 +254,20 @@ class Builder(object):
             return np.array([Tv_gf, tau_v_gf, Tv_gr, tau_v_gr])
 
         # radiative transfer
+        #start = time.time()
         _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
             dist = dist, au = True) # in unit of Jy/pixel with the final pixel size
         #_Bv = lambda T, v: Bv(T, v)
         _Bv_cmb = _Bv(Tcmb, f0)
         _Bv_gf  = _Bv(Tv_gf, f0)
         _Bv_gr  = _Bv(Tv_gr, f0)
-        _Bv_d   = _Bv(T_d, f0)
-        Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
-            tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
+        _Bv_d   = _Bv(T_d, f0)[np.newaxis,:]
+        #Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
+        #    tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
+        Iv = solveRT_TL(_Bv_gf, _Bv_gr, _Bv_d, _Bv_cmb,
+            tau_v_gf, tau_v_gr, tau_d,)
+        #end = time.time()
+        #print('radiative transfer took %.2fs'%(end-start))
 
 
         # contsub
@@ -830,9 +837,9 @@ class Builder_SLD(Builder_SSDisk):
         + _Bv_g * (1. - np.exp(-tau_v_g))
 
         # contsub
-        if contsub:
-            Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_v_d))
-            Iv -= Iv_d # add continuum back
+        #if contsub:
+        #    Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_v_d))
+        #    Iv -= Iv_d # add continuum back
 
         # collapse
         Iv = self.skygrid.high_dimensional_collapse(Iv, 
@@ -1014,3 +1021,16 @@ def Bv_Jybeam(T,v,bmaj,bmin):
     Bv = Bv*1.0e26     # MKS --> Jy (Jy = 10^-26 Wm-2Hz-1)
     Bv = Bv*bTOstr     # Jy/str --> Jy/beam
     return Bv
+
+
+def solveRT_TL(Sv_gf, Sv_gr, Sv_d, Sv_bg,
+    tau_v_gf, tau_v_gr, tau_d):
+    Iv_d = (Sv_d - Sv_bg) * (1. - np.exp(- tau_d))
+    Iv = Sv_bg * (
+        np.exp(- tau_v_gf - tau_d - tau_v_gr) - 1.) \
+            + Sv_gr * (1. - np.exp(- tau_v_gr)) \
+            * np.exp(- tau_v_gf  - tau_d) \
+            + Sv_d * (1. - np.exp(- tau_d)) * np.exp(- tau_v_gf) \
+            + Sv_gf * (1. - np.exp(- tau_v_gf)) \
+            - Iv_d
+    return Iv

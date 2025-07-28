@@ -6,7 +6,7 @@ from math import erf
 # Set threading layer
 #config.THREADING_LAYER = 'tbb'
 
-@njit(parallel=True)
+@njit(parallel=True, cache=True)
 def glnprof_series(v, v0, delv, unit_scale = 1.):
     '''
     Generate series of normalized Gaussian line profiles.
@@ -20,7 +20,8 @@ def glnprof_series(v, v0, delv, unit_scale = 1.):
     nd = v0.size
     nv = len(v)
     dv_cell = v[1] - v[0]
-    v_min, v_max = v[0], v[-1]
+    v_min = v[0]
+    v_max = v[-1]
 
     lnprof = np.zeros((nv, nd))
     for i in prange(nd):
@@ -28,9 +29,38 @@ def glnprof_series(v, v0, delv, unit_scale = 1.):
         sampled_fraction = 0.5 * (erf((v_max - v0[i]) / (delv[i])) # np.sqrt(2.)
             - erf((v_min - v0[i]) / (delv[i])))
         lnprof[:,i] = profi / np.sum(profi * dv_cell) * sampled_fraction * unit_scale
-        lnprof[:,i][lnprof[:,i] <= 3.7e-5 / np.sqrt(np.pi * delv[i]) * unit_scale] = 0. # 5 sigma
+        #lnprof[:,i][lnprof[:,i] <= 3.7e-5 / np.sqrt(np.pi * delv[i]) * unit_scale] = 0. # 5 sigma
+        for k in range(nv):
+            if (lnprof[k,i] <= 3.7e-5 / np.sqrt(np.pi * delv[i]) * unit_scale):
+                lnprof[k,i] = 0. # less than 5 sigma
 
     return lnprof
+
+
+# xyz temperature and density to xyzv
+# For nested grid
+@njit(parallel=True, cache=True)
+def to_xyzv(data,lnprof,):
+    '''
+    Convert flattend cubic data into xyzv 4D data with given line profiles.
+
+    Parameters
+    ----------
+     data (2D array): flattend cubic data. Must be in shape of (nq, nd), where
+      nq is number of quantities and nd is number of data that is nx * ny * nz.
+     lnprof (2D array): Line profile for each cell. Must be in shape of (nv, nd),
+      where nv is number of velocity cells and nd is number of data.
+    '''
+    nv, nd = lnprof.shape
+    nq = data.shape[0]
+    xyzv = np.zeros((nq, nv, nd))
+
+    for i in range(nq):
+        for j in range(nv):
+            for k in range(nd):
+                xyzv[i,j,k] = data[i,k] * lnprof[j,k]
+
+    return xyzv
 
 
 @njit(parallel=True)
