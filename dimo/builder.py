@@ -133,6 +133,7 @@ class Builder(object):
         zp = self.zs
         dzp = self.grid.dznest
         # rotate by PA
+        #_xp, _yp = xp, yp
         _xp, _yp = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
         # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
         # adoptive z axis
@@ -331,6 +332,8 @@ class Builder(object):
             if self.adoptive_zaxis:
                 zoffset = _grid.collapse(self.zoffset, upto = l)
                 _zz += zoffset
+                #_xx, _yy = rot2d(_xx - self.dx0, _yy - self.dy0, 
+                #    self._pa_rad - 0.5 * np.pi)
 
             im1 = ax1.pcolormesh(_zz[:, ny//2, :], _xx[:, ny//2, :], d_plt[:, ny//2, :], 
                 alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
@@ -342,12 +345,17 @@ class Builder(object):
             #ax1.add_patch(rect)
 
         #ax1.set_xlim(_grid.zlim[0][0], _grid.zlim[0][1])
-        ax1.set_ylim(np.min(_grid.xlim[0]), np.max(_grid.xlim[0]) )
-        ax2.set_ylim(_grid.ylim[0])
+        gmin = np.min([np.min(_grid.xlim[0]), np.min(_grid.ylim[0])])
+        gmax = np.max([np.max(_grid.xlim[0]), np.max(_grid.ylim[0])])
+        for ax in (axes):
+            ax.set_xlim(gmin, gmax)
+            ax.set_ylim(gmin, gmax)
+            ax.set_aspect(1)
 
         ax1.set_ylabel(r'$x^\prime$ (au)')
         ax1.set_xlabel(r'$z^\prime$ (au)')
         ax2.set_ylabel(r'$y^\prime$ (au)')
+        ax2.set_xlabel(r'$z^\prime$ (au)')
 
         fig.tight_layout()
 
