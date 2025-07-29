@@ -297,8 +297,9 @@ class TwoComponentDisk:
             self.log_N_gc, self.rc_g, self.gamma_g, self.Tg0, self.qg,
             self.log_tau_dc, self.rc_d, self.gamma_d, self.Td0, self.qd,
             self.dv, self.pdv, self.r0,
-            self.ms, self._inc_rad, self.vsys,
-            mu, mmol, dv_mode, pterm)
+            self.ms * Ggrav * Msun, self._inc_rad, self.vsys,
+            mu, mmol, dv_mode, pterm,
+            kb, mH, auTOcm)
         return T_g.reshape(shape), n_g.reshape(shape), vlos.reshape(shape), \
         dv.reshape(shape), T_d.reshape(shaped), tau_d.reshape(shaped)
 
