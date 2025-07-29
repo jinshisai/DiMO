@@ -23,12 +23,13 @@ def glnprof_series(v, v0, delv, unit_scale = 1.):
     v_min = v[0]
     v_max = v[-1]
 
-    lnprof = np.zeros((nv, nd)) # this order for later
-    #lnprof = np.zeros((nd, nv)) # new
+    #lnprof = np.zeros((nv, nd)) # this order for later
+    lnprof = np.zeros((nd, nv)) # new
     for i in prange(nd):
         v0i = v0[i]
         delvi = delv[i]
         # old version
+        '''
         profi = np.exp( - (v - v0i)**2. / delvi**2.)
         sampled_fraction = 0.5 * (erf((v_max - v0i) / (delvi)) # np.sqrt(2.)
             - erf((v_min - v0i) / (delvi)))
@@ -36,11 +37,11 @@ def glnprof_series(v, v0, delv, unit_scale = 1.):
         thr = 3.7e-5 / np.sqrt(np.pi * delvi) * unit_scale
         for k in range(nv):
             if (profi[k] <= thr):
-                lnprof[k,i] = 0. # apart more than 5 sigma
+                lnprof[i,k] = 0. # apart more than 5 sigma
             else:
-                lnprof[k,i] = profi[k]
-
+                lnprof[i,k] = profi[k]
         '''
+
         # new
         expterm = (v - v0i)**2. / delvi**2.
         for j in range(nv):
@@ -54,7 +55,6 @@ def glnprof_series(v, v0, delv, unit_scale = 1.):
             - erf((v_min - v0i) / (delvi)))
         prof_int = np.sum(lnprof[i,:] * dv_cell)
         lnprof[i,:] *= sampled_fraction * unit_scale / prof_int
-        '''
 
     return lnprof
 
@@ -107,14 +107,12 @@ def to_xyzv(data,lnprof,):
      lnprof (2D array): Line profile for each cell. Must be in shape of (nv, nd),
       where nv is number of velocity cells and nd is number of data.
     '''
-    nv, nd = lnprof.shape
-    nq = data.shape[0]
-    xyzv = np.zeros((nq, nv, nd))
+    nd, nv = lnprof.shape
+    xyzv = np.zeros((nd, nv))
 
-    for i in range(nq):
+    for i in prange(nd):
         for j in range(nv):
-            for k in range(nd):
-                xyzv[i,j,k] = data[i,k] * lnprof[j,k]
+                xyzv[i,j] = data[i] * lnprof[i,j]
 
     return xyzv
 

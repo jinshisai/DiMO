@@ -242,18 +242,18 @@ class Builder(object):
 
             # get nv
             start = time.time()
-            #nv_cube = linecube.to_xyzv(
-            #    np.array([n_g.ravel()]), lnprofs)
-            nv_g = n_g.ravel()[np.newaxis, :] * lnprofs
-            nv_g = nv_g.reshape((self.nv, self.grid.nxy, self.nz))
+            nv_g = spectra.to_xyzv(n_g.ravel(), lnprofs)
+            #nv_g = n_g.ravel()[:, np.newaxis] * lnprofs
+            #print(lnprofs.shape)
+            nv_g = nv_g.reshape((self.grid.nxy, self.nz, self.nv))
             end = time.time()
             print('to xyzv took %.2fs'%(end-start))
 
 
-            start = time.time()
+            #start = time.time()
             Qrots = self.getQrot(T_g)
-            end = time.time()
-            print('get Qrot took %.2fs'%(end-start))
+            #end = time.time()
+            #print('get Qrot took %.2fs'%(end-start))
 
             # to cube
             start = time.time()
@@ -293,7 +293,8 @@ class Builder(object):
         _Bv_cmb = _Bv(Tcmb, f0)
         _Bv_gf  = _Bv(Tv_gf, f0)
         _Bv_gr  = _Bv(Tv_gr, f0)
-        _Bv_d   = _Bv(T_d, f0)[np.newaxis,:]
+        _Bv_d   = _Bv(T_d, f0)[:,np.newaxis]
+        tau_d   = tau_d[:,np.newaxis]
         #Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
         #    tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
         Iv = solveRT_TL(_Bv_gf, _Bv_gr, _Bv_d, _Bv_cmb,
@@ -309,8 +310,8 @@ class Builder(object):
             Iv += Iv_d # add continuum back
 
         Iv = np.transpose(
-            self.grid.collapse2D(Iv, collapse_mode = 'mean'),
-            axes = (0,2,1)) # (v, x, y) to (v, y, x)
+            self.grid.collapse2D(Iv.T, collapse_mode = 'mean'),
+            axes = (0,2,1)) # (v, x, y, v) to (v, y, x)
 
 
         # Convolve beam if given
