@@ -381,34 +381,34 @@ def Tnv_to_cube(Tg, nv_g, zs, dzs,
     Returns:
         Tncube: 4D numpy array of the resulting cube.
     """
-    nv, nxy, nz = nv_g.shape
+    nxy, nz, nv = nv_g.shape
     #Qg1, Qg2 = Qgrid
 
     # output
-    Tv_gf = np.zeros((nv, nxy))
-    Tv_gr = np.zeros((nv, nxy))
-    tau_v_gf = np.zeros((nv, nxy))
-    tau_v_gr = np.zeros((nv, nxy))
+    Tv_gf = np.zeros((nxy,nv))
+    Tv_gr = np.zeros((nxy,nv))
+    tau_v_gf = np.zeros((nxy,nv))
+    tau_v_gr = np.zeros((nxy,nv))
 
-    for i in prange(nv):
-        for j in range(nxy):
+    for i in prange(nxy):
+        for j in range(nv):
             T_gf_sum = 0.0
             T_gr_sum = 0.0
             tau_gf = 0.0
             tau_gr = 0.0
 
             for k in range(nz):
-                z = zs[j,k]
-                dz = dzs[j,k]
-                _nv_g = nv_g[i,j,k]
+                z = zs[i,k]
+                dz = dzs[i,k]
+                _nv_g = nv_g[i,k,j]
                 if (tau_gf >= 30.0) and (tau_gr >= 30.0):
                     #print('Went over 30!')
                     break
 
                 if (_nv_g > 0.):
                      # temperature
-                    _Tg = Tg[j,k]
-                    Qrot = Qgrid[j,k] #interp(_Tg, Qg1, Qg2)
+                    _Tg = Tg[i,k]
+                    Qrot = Qgrid[i,k] #interp(_Tg, Qg1, Qg2)
 
                     # front side
                     if (z <= 0) and (tau_gf < 30.0):
