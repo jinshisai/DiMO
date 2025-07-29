@@ -14,6 +14,7 @@ from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, Nested3DObsGrid
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
+from .fastbuild import fastbuild_twocompdisk
 
 ### constants
 Ggrav  = constants.G.cgs.value        # Gravitational constant
@@ -163,7 +164,7 @@ class TwoComponentDisk:
         # temperature
         T = self.Tg0 * (R / self.r0)**(-self.qg)
         T[np.isnan(T)] = 1. # to prevent computational errors
-        T[T <= 1] = 1. # safty net
+        T[T < 1] = 1. # safty net
         return T
 
 
@@ -172,7 +173,7 @@ class TwoComponentDisk:
         # temperature
         T = self.Td0 * (R / self.r0)**(-self.qd)
         T[np.isnan(T)] = 1. # to prevent computational errors
-        T[T <= 1] = 1. # safty net
+        T[T < 1] = 1. # safty net
         return T
 
 
@@ -265,7 +266,7 @@ class TwoComponentDisk:
 
 
     def build(self, R, phi, z, Rmid, 
-        dv_mode = 'total', collapse = False, 
+        dv_mode = 'total', 
         mmol = 30., mu = 2.34, pterm = True,):
         '''
         deproject_grid frist.
@@ -283,6 +284,23 @@ class TwoComponentDisk:
         tau_d = self.dust_density(Rmid)
 
         return T_g, n_g, vlos, dv, T_d, tau_d
+
+
+    def fastbuild(self, R, phi, z, Rmid, 
+        dv_mode = 'total', 
+        mmol = 30., mu = 2.34, pterm = True,):
+        shape = R.shape
+        shaped = Rmid.shape
+
+        T_g, n_g, vlos, dv, T_d, tau_d = \
+        fastbuild_twocompdisk(R.ravel(), phi.ravel(), z.ravel(), Rmid.ravel(), 
+            self.log_N_gc, self.rc_g, self.gamma_g, self.Tg0, self.qg,
+            self.log_tau_dc, self.rc_d, self.gamma_d, self.Td0, self.qd,
+            self.dv, self.pdv, self.r0,
+            self.ms, self._inc_rad, self.vsys,
+            mu, mmol, dv_mode, pterm)
+        return T_g.reshape(shape), n_g.reshape(shape), vlos.reshape(shape), \
+        dv.reshape(shape), T_d.reshape(shaped), tau_d.reshape(shaped)
 
 
     def build_cube(self, Tcmb = 2.73, f0 = 230., 

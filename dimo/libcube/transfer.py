@@ -382,6 +382,7 @@ def Tnv_to_cube(Tg, nv_g, zs, dzs,
         Tncube: 4D numpy array of the resulting cube.
     """
     nv, nxy, nz = nv_g.shape
+    #Qg1, Qg2 = Qgrid
 
     # output
     Tv_gf = np.zeros((nv, nxy))
@@ -407,7 +408,7 @@ def Tnv_to_cube(Tg, nv_g, zs, dzs,
                 if (_nv_g > 0.):
                      # temperature
                     _Tg = Tg[j,k]
-                    Qrot = interp(_Tg, Qgrid[0], Qgrid[1])
+                    Qrot = Qgrid[j,k] #interp(_Tg, Qg1, Qg2)
 
                     # front side
                     if (z <= 0) and (tau_gf < 30.0):
@@ -475,17 +476,3 @@ def Nv_to_tauv(T, Nv,
                     _Nv, _T, freq, Aul, Eu, gu, Qrot, 1.
                     ) # /delv is already included in line profile function
     return tau_v
-
-
-
-def solve_MRLT(Bv_gf, Bv_gr, Bv_d, 
-    tau_v_gf, tau_v_gr, tau_d, Bv_cmb, nv):
-    Iv_d = (Sv_d - Sv_bg) * (1. - exp(- tau_d))
-    Iv = Sv_bg * (
-        exp(- tau_gf - tau_d - tau_gr) - 1.) \
-            + Sv_gr * (1. - exp(- tau_gr)) \
-            * exp(- tau_gf  - tau_d) \
-            + Sv_d * (1. - exp(- tau_d)) * exp(- tau_gf) \
-            + Sv_gf * (1. - exp(- tau_gf)) \
-            - Iv_d
-    return Iv

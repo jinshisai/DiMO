@@ -123,6 +123,12 @@ class Builder(object):
         self.gaussbeam = gaussbeam
 
 
+    def getQrot(self, Ts):
+        shape = Ts.shape
+        Qrot = np.interp(Ts.ravel(), self.Qgrid[0], self.Qgrid[1])
+        return Qrot.reshape(shape)
+
+
     def deproject_grid(self, 
         adoptive_zaxis = True, 
         cosi_lim = 0.5):
@@ -187,8 +193,11 @@ class Builder(object):
 
     def build_model(self, dv_mode, pterm):
         T_g, n_g, vlos, dv, T_d, tau_d = self.model.build(
-            self.Rs, self.phs, self.zps, self.Rmid,
+           self.Rs, self.phs, self.zps, self.Rmid,
             dv_mode = dv_mode, mmol = self.mmol, pterm = pterm)
+        #T_g, n_g, vlos, dv, T_d, tau_d = self.model.fastbuild(
+        #    self.Rs, self.phs, self.zps, self.Rmid,
+        #    dv_mode = dv_mode, mmol = self.mmol, pterm = pterm)
         return T_g, n_g, vlos, dv, T_d, tau_d
 
 
@@ -196,7 +205,11 @@ class Builder(object):
         Tcmb = 2.73, f0 = 230., 
         dist = 140., dv_mode = 'total', 
         pterm = True, contsub = True, return_Ttau = False):
+        start = time.time()
         T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode = dv_mode, pterm = pterm)
+        end = time.time()
+        print('building model took %.2fs'%(end-start))
+
 
         # dust
         #T_d = self.grid2D.collapse(T_d)
@@ -207,36 +220,55 @@ class Builder(object):
         #  of each gas layer at every velocity channel.
         if (self.model.dv > 0.) | (dv_mode == 'thermal'):
             # line profile function
-            #start = time.time()
+            start = time.time()
             lnprofs = spectra.glnprof_series(self.v, 
-            vlos.ravel(), dv.ravel(), unit_scale = 1.e-5)
+                vlos.ravel(), dv.ravel(), unit_scale = 1.e-5)
+            #start = time.time()
+            #vlos = vlos.ravel()[:,np.newaxis]
+            #dv = dv.ravel()[:,np.newaxis]
+            #v = self.v[np.newaxis,:]
+            #exp_term = (v - vlos) / dv
             #end = time.time()
-            #print('making spectra took %.2fs'%(end-start))
+            #print('making spectra broadcasting took %.2fs'%(end-start))
+            #exp_term = (self.v[np.newaxis,:] - vlos) / dv
+            #lnprofs = np.exp( - exp_term**2.) # (d, v)
+            #end = time.time()
+            #print('making spectra broadcasting took %.2fs'%(end-start))
+            #start = time.time()
+            #lnprofs = spectra.normalize_glnprofs(
+            #    lnprofs, self.v, vlos[:,0], dv[:,0], unit_scale = 1.e-5).T
+            end = time.time()
+            print('making spectra took %.2fs'%(end-start))
 
             # get nv
-            #start = time.time()
+            start = time.time()
             #nv_cube = linecube.to_xyzv(
             #    np.array([n_g.ravel()]), lnprofs)
             nv_g = n_g.ravel()[np.newaxis, :] * lnprofs
             nv_g = nv_g.reshape((self.nv, self.grid.nxy, self.nz))
-            #end = time.time()
-            #print('to xyzv took %.2fs'%(end-start))
+            end = time.time()
+            print('to xyzv took %.2fs'%(end-start))
 
+
+            start = time.time()
+            Qrots = self.getQrot(T_g)
+            end = time.time()
+            print('get Qrot took %.2fs'%(end-start))
 
             # to cube
-            #start = time.time()
+            start = time.time()
             if self.side == 1:
                 Tv_gf, Tv_gr, tau_v_gf, tau_v_gr = transfer.Tnv_to_cube(
                     T_g, nv_g, self.grid.znest,
                     self.grid.dznest * auTOcm,
-                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
+                    self.freq, self.Aul, self.Eu, self.gu, Qrots)
             else:
                 Tv_gr, Tv_gf, tau_v_gr, tau_v_gf = transfer.Tnv_to_cube(
                     T_g, nv_g, self.grid.znest,
                     self.grid.dznest * auTOcm,
-                    self.freq, self.Aul, self.Eu, self.gu, self.Qgrid)
-            #end = time.time()
-            #print('to cube took %.2fs'%(end-start))
+                    self.freq, self.Aul, self.Eu, self.gu, Qrots)
+            end = time.time()
+            print('to cube took %.2fs'%(end-start))
         else:
             Tv_gf, Tv_gr, Nv_gf, Nv_gr = np.transpose(
             Tt_to_cube(T_g, n_gf, n_gr, vlos, self.ve, self.grid.dz * auTOcm,),
