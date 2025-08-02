@@ -96,6 +96,7 @@ class Builder(object):
             self.Qgrid = (self.mol.moldata[line]._Tgrid, self.mol.moldata[line]._PFgrid)
             self.trans, self.freq, self.Aul, self.gu, self.gl, self.Eu, self.El = \
             self.mol.moldata[line].params_trans(iline)
+            self.f = doppler_v2f(v *1.e5, self.freq)
 
         # beam
         if beam is not None:
@@ -275,10 +276,13 @@ class Builder(object):
         _Bv = lambda T, v: Bvppx(T, v, self.grid.dx, self.grid.dy, 
             dist = dist, au = True) # in unit of Jy/pixel with the final pixel size
         #_Bv = lambda T, v: Bv(T, v)
-        _Bv_cmb = _Bv(Tcmb, f0)
-        _Bv_gf  = _Bv(Tv_gf, f0)
-        _Bv_gr  = _Bv(Tv_gr, f0)
-        _Bv_d   = _Bv(T_d, f0)[:,np.newaxis]
+        f = doppler_v2f((self.v - self.model.vsys) *1.e5, self.freq)
+        fs = self.f[np.newaxis,:]
+        _Bv_cmb = _Bv(Tcmb, fs)
+        _Bv_gf  = _Bv(Tv_gf, fs)
+        _Bv_gr  = _Bv(Tv_gr, fs)
+        _Bv_d   = _Bv(T_d[:,np.newaxis], fs)#[:,np.newaxis]
+        #_Bv_d   = _Bv(T_d, self.freq)[:,np.newaxis]
         tau_d   = tau_d[:,np.newaxis]
         #Iv = solve_MLRT(_Bv_gf, _Bv_gr, _Bv_d, 
         #    tau_v_gf, tau_v_gr, tau_d, _Bv_cmb, self.nv)
@@ -297,7 +301,6 @@ class Builder(object):
         Iv = np.transpose(
             self.grid.collapse2D(Iv.T, collapse_mode = 'mean'),
             axes = (0,2,1)) # (v, x, y, v) to (v, y, x)
-
 
         # Convolve beam if given
         if self.beam is not None:
@@ -935,9 +938,9 @@ def Bv(T,v):
     Unit is [erg s-1 cm-2 Hz-1 str-1].
 
     T: temprature [K]
-    v: frequency [GHz]
+    v: frequency [Hz]
     '''
-    v = v * 1.e9 # GHz --> Hz
+    #v = v * 1.e9 # GHz --> Hz
     #print((hp*v)/(kb*T))
     exp=np.exp((hp*v)/(kb*T)) - 1.0
     fterm=(2.0*hp*v*v*v)/(clight*clight)
@@ -951,10 +954,10 @@ def Bvppx(T, v, px, py, dist = 140., au = True):
     Unit is [erg s-1 cm-2 Hz-1 str-1].
 
     T: temprature [K]
-    v: frequency [GHz]
+    v: frequency [Hz]
     '''
     # unit
-    v = v * 1.e9 # GHz --> Hz
+    #v = v * 1.e9 # GHz --> Hz
 
     # Bv in cgs
     exp = np.exp((hp*v)/(kb*T)) - 1.0
@@ -1052,3 +1055,16 @@ def solveRT_TL(Sv_gf, Sv_gr, Sv_d, Sv_bg,
             + Sv_gf * (1. - np.exp(- tau_v_gf)) \
             - Iv_d
     return Iv
+
+
+def doppler_f2v(f, f0, definition = 'radio'):
+    return (f0 - f) / f0 * clight
+
+def doppler_df2dv(df, f0, definition = 'radio'):
+    return - df * clight / f0
+
+def doppler_v2f(v, f0, definition = 'radio'):
+    return f0 - v * f0 / clight
+
+def doppler_dv2df(dv, f0, definition = 'radio'):
+    return - dv * f0 / clight
