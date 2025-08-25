@@ -10,5 +10,5 @@ from . import libcube
 #from . import export
 
 __all__ = ['DiMO', 'FitThinModel', 'Builder', 'Builder_SSDisk', 'Builder_SLD',
-'MultiLayerDisk', 'ThreeLayerDisk', 'SingleLayerDisk', 'SSDisk',
+'MultiLayerDisk', 'ThreeLayerDisk', 'SingleLayerDisk', 'SingleLayerDisk_old', 'SSDisk',
 'TwoComponentDisk', 'models', 'mpe', 'grid', 'libcube']
