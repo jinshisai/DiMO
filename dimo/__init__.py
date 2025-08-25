@@ -1,6 +1,6 @@
 # import model
 from ._dimo import DiMO, FitThinModel
-from .models import ThreeLayerDisk, SingleLayerDisk, \
+from .models import ThreeLayerDisk, SingleLayerDisk, SingleLayerDisk_old, \
 MultiLayerDisk, SSDisk, MultiLayerRingDisk, TwoComponentDisk
 from .builder import Builder, Builder_SSDisk, Builder_SLD
 from . import models
