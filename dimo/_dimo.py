@@ -576,7 +576,7 @@ class DiMO(object):#, FitThinModel):
      params_fixed (dict): Fixed parameters
     """
     def __init__(self, model, params_free, params_fixed, 
-        beam = None, dist = 140., line = None, iline = None, dv_mode = 'total',
+        beam = None, width = -1, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
         n_nest = None, zstrech = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
         xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10.):
@@ -607,6 +607,7 @@ class DiMO(object):#, FitThinModel):
             ) # re-ordered elements
         self.model = model #(*self.params_ini)
         self.beam = beam
+        self.width = width
         self.dist = dist
         self.build_args = [beam, dist] + build_args if build_args is not None\
         else [beam, dist]
@@ -1089,7 +1090,7 @@ class DiMO(object):#, FitThinModel):
         # setup model
         model = Builder(_x, _y, z, v, 
             self.model, nsub = self.n_nest, zstrech = self.zstrech, 
-            reslim = self.reslim, beam = self.beam,
+            reslim = self.reslim, beam = self.beam, width = self.width,
             line = self.line, iline = self.iline, rin = self.rin,
             adoptive_zaxis = True, cosi_lim = 0.5,)
         model.grid.gridinfo()
