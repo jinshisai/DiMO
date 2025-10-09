@@ -1976,6 +1976,80 @@ class Nested2DGrid_old(object):
 
 
 
+
+class SubGrid1D(object):
+    """docstring for NestedGrid"""
+    def __init__(self, x, nsub = 2):
+        super(SubGrid1D, self).__init__()
+        # save grid info
+        self.x = x
+        nx = len(x)
+        self.nx = nx
+        self.dx = x[1] - x[0]
+        self.xc = x[nx//2]
+        self.xci = nx//2
+
+        # cell edges
+        self.xe = np.hstack([x - self.dx * 0.5, x[-1] + self.dx * 0.5])
+
+        # subgrid
+        self.subgrid(nsub = nsub)
+
+
+    def subgrid(self, nsub = 2):
+        self.nsub = nsub
+        nx_sub = self.nx * nsub
+        self.nx_sub = nx_sub
+
+        # sub grid
+        xemin, xemax = self.xe[0], self.xe[-1] # edge of the original grid
+        xe_sub = np.linspace(xemin, xemax, nx_sub + 1)
+        x_sub = 0.5 * (xe_sub[:-1] + xe_sub[1:])
+        self.xe_sub = xe_sub
+        self.x_sub = x_sub
+        self.dx_sub = self.dx / nsub
+        return x_sub
+
+
+    def binning_onsubgrid(self, data):
+        nbin = self.nsub
+        d_avg = np.array([
+            data[i::nbin]
+            for i in range(nbin)
+            ])
+        return np.nanmean(d_avg, axis = 0)
+
+
+    def binning_onsubgrid_layered(self, data):
+        nbin = self.nsub
+        dshape = len(data.shape)
+        if dshape == 2:
+            d_avg = np.array([
+                data[i::nbin]
+                for i in range(nbin)
+                ])
+        elif dshape == 3:
+            d_avg = np.array([
+                data[:, i::nbin]
+                for i in range(nbin)
+                ])
+        elif dshape ==4:
+            d_avg = np.array([
+                data[:, :, i::nbin]
+                for i in range(nbin)
+                ])
+        else:
+            print('ERROR\tbinning_onsubgrid_layered: only Nd of data of 2-4 is now supported.')
+            return 0
+        return np.nanmean(d_avg, axis = 0)
+
+
+    def shift(self):
+        rex = np.arange(-self.nx//2, self.nx//2+1, 1) + 0.5
+        rex *= self.dx
+        return rex
+
+
 class SubGrid2D(object):
     """docstring for NestedGrid"""
     def __init__(self, x, y, nsub = 2):
@@ -2026,8 +2100,8 @@ class SubGrid2D(object):
     def binning_onsubgrid(self, data):
         nbin = self.nsub
         d_avg = np.array([
-            data[i::nbin, i::nbin]
-            for i in range(nbin)
+            data[j::nbin, i::nbin]
+            for j in range(nbin) for i in range(nbin)
             ])
         return np.nanmean(d_avg, axis = 0)
 
@@ -2037,18 +2111,18 @@ class SubGrid2D(object):
         dshape = len(data.shape)
         if dshape == 2:
             d_avg = np.array([
-                data[i::nbin, i::nbin]
-                for i in range(nbin)
+                data[j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape == 3:
             d_avg = np.array([
-                data[:, i::nbin, i::nbin]
-                for i in range(nbin)
+                data[:, j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         elif dshape ==4:
             d_avg = np.array([
-                data[:, :, i::nbin, i::nbin]
-                for i in range(nbin)
+                data[:, :, j::nbin, i::nbin]
+                for j in range(nbin) for i in range(nbin)
                 ])
         else:
             print('ERROR\tbinning_onsubgrid_layered: only Nd of data of 2-4 is now supported.')
@@ -2067,12 +2141,12 @@ class SubGrid2D(object):
         _xx = xx[ycut//2:-ycut//2, xcut//2:-xcut//2]
         _yy = yy[ycut//2:-ycut//2, xcut//2:-xcut//2]
         xx_avg = np.array([
-            _xx[i::nbin, i::nbin]
-            for i in range(nbin)
+            _xx[j::nbin, i::nbin]
+            for j in range(nbin) for i in range(nbin)
             ])
         yy_avg = np.array([
-            _yy[i::nbin, i::nbin]
-            for i in range(nbin)
+            _yy[j::nbin, i::nbin]
+            for j in range(nbin) for i in range(nbin)
             ])
 
         return np.average(xx_avg, axis= 0), np.average(yy_avg, axis= 0)

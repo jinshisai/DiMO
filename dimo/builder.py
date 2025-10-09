@@ -6,14 +6,15 @@ import copy
 from scipy.interpolate import griddata
 from scipy.optimize import root, minimize
 from scipy.signal import convolve
+from scipy.ndimage import convolve1d
 from astropy import constants, units
 import dataclasses
 from dataclasses import dataclass
 import time
 from scipy import special
 
-from .funcs import beam_convolution, gaussian2d, glnprof_conv
-from .grid import Nested3DObsGrid, Nested2DGrid, Nested1DGrid, SubGrid2D
+from .funcs import beam_convolution, gaussian2d, glnprof_conv, gauss1d
+from .grid import Nested3DObsGrid, Nested2DGrid, Nested1DGrid, SubGrid2D, SubGrid1D
 #from .linecube import tocube, solve_3LRT, waverage_to_cube, integrate_to_cube, solve_box3LRT
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube, solve_MLRT_cube
 from .molecule import Molecule
@@ -47,7 +48,8 @@ class Builder(object):
         nsub: list | None = None, zstrech: list | None = None, 
         reslim: float = 10, rin: float = 1.,
         adoptive_zaxis: bool = True, cosi_lim: float = 0.5, 
-        beam: list | None = None, line: str | None = None, iline: int | None = None,
+        beam: list | None = None, width: float = -1,
+        f_nvbin: float = 0.33, line: str | None = None, iline: int | None = None,
         Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,):
         '''
         Set up model grid and initialize model.
@@ -78,10 +80,28 @@ class Builder(object):
         self.rin = rin
 
         # velocity
-        self.nv = len(v)
-        self.delv = np.mean(v[1:] - v[:-1]) # km / s
-        self.v = v
-        self.ve = np.hstack([v - self.delv * 0.5, v[-1] + 0.5 * self.delv])
+        # refine v-axis if width is given and delv is not sufficient
+        if width > 0.:
+            delv = np.mean(v[1:] - v[:-1])
+            nvbin = int(delv // (width * f_nvbin)) # at least five
+            if nvbin == 0: nvbin = 1
+        else:
+            nvbin = 1
+        self.width = width
+        self.sigma = width / 2.35482
+        self.nvbin = nvbin
+        # velocity axis
+        self.vaxis = SubGrid1D(v, nvbin)
+        self.nv = self.vaxis.nx_sub
+        self.delv = self.vaxis.dx_sub
+        self.ve = self.vaxis.xe_sub
+        self.v = self.vaxis.x_sub
+        if width > 0.:
+            self.define_window(width)
+        #self._nv = len(v)
+        #self._delv = np.mean(v[1:] - v[:-1]) # km / s
+        #self._v = v
+        #self._ve = np.hstack([v - self.delv * 0.5, v[-1] + 0.5 * self.delv])
 
         # model
         self.model = model()
@@ -96,7 +116,7 @@ class Builder(object):
             self.Qgrid = (self.mol.moldata[line]._Tgrid, self.mol.moldata[line]._PFgrid)
             self.trans, self.freq, self.Aul, self.gu, self.gl, self.Eu, self.El = \
             self.mol.moldata[line].params_trans(iline)
-            self.f = doppler_v2f(v *1.e5, self.freq)
+            self.f = doppler_v2f(self.v *1.e5, self.freq)
 
         # beam
         if beam is not None:
@@ -122,6 +142,22 @@ class Builder(object):
         beam[1] / 2.35, beam[0] / 2.35, beam[2], peak=True)
         gaussbeam /= np.sum(gaussbeam)
         self.gaussbeam = gaussbeam
+
+
+    def define_window(self, width,):
+        '''
+        Define a window function for spectral smoothing.
+
+        Parameters
+        ----------
+        width (float): FWHM of the window.
+        nbin (int): A binning factor.
+        '''
+        gausswindow = gauss1d(
+            self.v, 1., self.v[self.nv//2 - 1 + self.nv%2], width / 2.35482)
+        gausswindow /= np.sum(gausswindow)
+        gausswindow = gausswindow.reshape((self.nv,1,1))
+        self.gausswindow = gausswindow
 
 
     def getQrot(self, Ts):
@@ -277,7 +313,7 @@ class Builder(object):
             dist = dist, au = True) # in unit of Jy/pixel with the final pixel size
         #_Bv = lambda T, v: Bv(T, v)
         f = doppler_v2f((self.v - self.model.vsys) *1.e5, self.freq)
-        fs = self.f[np.newaxis,:]
+        fs = f[np.newaxis,:]
         _Bv_cmb = _Bv(Tcmb, fs)
         _Bv_gf  = _Bv(Tv_gf, fs)
         _Bv_gr  = _Bv(Tv_gr, fs)
@@ -301,6 +337,19 @@ class Builder(object):
         Iv = np.transpose(
             self.grid.collapse2D(Iv.T, collapse_mode = 'mean'),
             axes = (0,2,1)) # (v, x, y, v) to (v, y, x)
+
+
+        # spectral smoothing
+        if self.width > 0.:
+            Iv = convolve(Iv, self.gausswindow, 
+                mode='same')
+            if self.nvbin > 1:
+                Iv_avg = np.array(
+                    [Iv[i::self.nvbin, :, :]
+                    for i in range(self.nvbin)
+                ])
+                Iv = np.nanmean(Iv_avg, axis = 0)
+
 
         # Convolve beam if given
         if self.beam is not None:
