@@ -56,6 +56,7 @@ def rotate2d(x, y, angle, deg=True, coords=False):
     return xrot, yrot
 
 
+
 def beam_convolution(xx, yy, image, beam, beam_image = None):
     '''
     Perform beam convolution. The input image must be in 
