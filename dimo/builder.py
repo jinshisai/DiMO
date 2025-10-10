@@ -65,6 +65,7 @@ class Builder(object):
         self.grid = Nested3DObsGrid(
         x, y, z, xlim, ylim, nsub, zstrech, reslim, preserve_z = True) # Plane of sky coordinates
         self.grid2D = Nested2DGrid(x, y, xlim, ylim, nsub, reslim)
+        self.cosi_lim = cosi_lim
         # Plane of sky coordinates
         self.xs = self.grid.xnest
         self.ys = self.grid.ynest
@@ -168,7 +169,7 @@ class Builder(object):
 
     def deproject_grid(self, 
         adoptive_zaxis = True, 
-        cosi_lim = 0.5):
+        ):
         '''
         Transfer the plane of sky coordinates to disk local coordinates.
         '''
@@ -181,7 +182,7 @@ class Builder(object):
         _xp, _yp = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
         # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
         # adoptive z axis
-        if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > cosi_lim):
+        if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > self.cosi_lim):
             # consider z=0 is in the disk midplane
             zoffset = - np.tan(self._inc_rad) * _yp # zp_mid(xp, yp)
             #zoffset = dzp * (zoffset // dzp) # shift in steps of dz
@@ -221,11 +222,15 @@ class Builder(object):
         self.dx0 = params['dx0']
         self.dy0 = params['dy0']
         self.inc = params['inc']
+        if (self.inc < 0.) | (self.inc > 180.):
+            print('ERROR\tset_model: inc must be 0 < i < 180.')
+            return 0
         _inc_rad = np.radians(self.inc)
         self._inc_rad = _inc_rad
         self.pa = params['pa']
         self._pa_rad = np.radians(self.pa)
-        self.side = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
+        #self.side = np.sign(np.cos(_inc_rad)) # cos(-i) = cos(i)
+        self.side = 1 # fix side cuz it is automatically determined
 
 
     def build_model(self, dv_mode, pterm):
@@ -246,7 +251,6 @@ class Builder(object):
         T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(dv_mode = dv_mode, pterm = pterm)
         #end = time.time()
         #print('building model took %.2fs'%(end-start))
-
 
         # dust
         #T_d = self.grid2D.collapse(T_d)
@@ -370,8 +374,8 @@ class Builder(object):
         #n_g = self.Rs
         #n_g = self.xps
         #vmin, vmax = np.nanmin(n_g), np.nanmax(n_g)
-        vmax *= np.log10(np.nanmax(n_g))
-        vmin *= np.log10(np.nanmax(n_g))
+        vmax = np.log10(np.nanmax(n_g) * vmax)
+        vmin = np.log10(np.nanmax(n_g) * vmin)
 
         #fig = plt.figure()
         #ax = fig.add_subplot(111)

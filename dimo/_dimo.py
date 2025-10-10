@@ -579,7 +579,7 @@ class DiMO(object):#, FitThinModel):
         beam = None, width = -1, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
         n_nest = None, zstrech = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
-        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10.):
+        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10., cosi_lim = 0.5):
 
         # parameter checks
         try:
@@ -590,8 +590,10 @@ class DiMO(object):#, FitThinModel):
         _input_keys = list(params_free.keys()) + list(params_fixed.keys())
         if sorted(_model_keys) != sorted(_input_keys):
             print('ERROR\tModelFitter: input keys do not match model input parameters.')
+            print('ERROR\tModelFitter: input keys: ')
+            print(sorted(_input_keys))
             print('ERROR\tModelFitter: input parameters must be as follows:')
-            print(_model_keys)
+            print(sorted(_model_keys))
             return 0
 
         # set model
@@ -621,6 +623,7 @@ class DiMO(object):#, FitThinModel):
         self.iline = iline
         self.rin = rin
         self.reslim = reslim
+        self.cosi_lim = cosi_lim
 
 
     def fit_cube(self, params: dict, pranges:list, 
@@ -1092,7 +1095,7 @@ class DiMO(object):#, FitThinModel):
             self.model, nsub = self.n_nest, zstrech = self.zstrech, 
             reslim = self.reslim, beam = self.beam, width = self.width,
             line = self.line, iline = self.iline, rin = self.rin,
-            adoptive_zaxis = True, cosi_lim = 0.5,)
+            adoptive_zaxis = True, cosi_lim = self.cosi_lim,)
         model.grid.gridinfo()
 
         # renew grid every fit or not
