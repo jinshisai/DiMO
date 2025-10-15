@@ -6,7 +6,7 @@ import copy
 from scipy.interpolate import griddata
 from scipy.optimize import root, minimize
 from scipy.signal import convolve
-from scipy.ndimage import convolve1d
+#from scipy.ndimage import convolve1d
 from astropy import constants, units
 import dataclasses
 from dataclasses import dataclass

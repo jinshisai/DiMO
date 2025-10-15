@@ -578,8 +578,10 @@ class DiMO(object):#, FitThinModel):
     def __init__(self, model, params_free, params_fixed, 
         beam = None, width = -1, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
-        n_nest = None, zstrech = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
-        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10., cosi_lim = 0.5):
+        n_nest = None, zstrech = None, 
+        x_nestlim = None, y_nestlim = None, z_nestlim = None,
+        xscale = 0.5, yscale = 0.5, zscale = 0.5, 
+        rin = 1., reslim = 10., cosi_lim = 0.5, f_nvbin = 0.33):
 
         # parameter checks
         try:
@@ -624,6 +626,7 @@ class DiMO(object):#, FitThinModel):
         self.rin = rin
         self.reslim = reslim
         self.cosi_lim = cosi_lim
+        self.f_nvbin = f_nvbin
 
 
     def fit_cube(self, params: dict, pranges:list, 
@@ -1093,9 +1096,10 @@ class DiMO(object):#, FitThinModel):
         # setup model
         model = Builder(_x, _y, z, v, 
             self.model, nsub = self.n_nest, zstrech = self.zstrech, 
-            reslim = self.reslim, beam = self.beam, width = self.width,
+            reslim = self.reslim, beam = self.beam, 
+            width = self.width, f_nvbin = self.f_nvbin,
             line = self.line, iline = self.iline, rin = self.rin,
-            adoptive_zaxis = True, cosi_lim = self.cosi_lim,)
+            adoptive_zaxis = True, cosi_lim = self.cosi_lim)
         model.grid.gridinfo()
 
         # renew grid every fit or not
