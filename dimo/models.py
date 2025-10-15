@@ -10,11 +10,11 @@ from dataclasses import dataclass
 import time
 
 from .funcs import beam_convolution, gaussian2d, glnprof_conv
-from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, Nested3DObsGrid
+from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, Nested3DObsGrid, SubGrid2D
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
-from .fastbuild import fastbuild_twocompdisk
+from .fastbuild import fastbuild_twocompdisk, fastbuild_multilayer
 
 ### constants
 Ggrav  = constants.G.cgs.value        # Gravitational constant
@@ -419,6 +419,8 @@ class MultiLayerDisk:
     # params for gas layer
     Tg0: float = 400. # Gas temperature at r0
     qg: float = 0.5 # power-law index of temperature distribution
+    #f_Tg0: float = 1.
+    #d_qg: float = 0.
     log_N_gc: float = 0.
     rc_g: float = 1.
     gamma_g: float = 1.
@@ -450,7 +452,8 @@ class MultiLayerDisk:
 
     def set_params(self, 
         Td0 = 400., qd = 0.5, log_tau_dc = 0., rc_d = 100., gamma_d = 1., 
-        Tg0 = 400., qg = 0.5, log_N_gc = 0., rc_g = 100., gamma_g = 1., 
+        Tg0 = 400., qg = 0.5, #f_Tg0 = 1., d_qg = 0.,
+        log_N_gc = 0., rc_g = 100., gamma_g = 1., 
         z0 = 0., pz = 1.25, h0 = 0., ph = 0., inc = 0., pa = 0., ms = 1., vsys = 0, 
         dx0=0., dy0=0., r0 = 1., dv = 0., pdv = 0.25):
         '''
@@ -485,6 +488,8 @@ class MultiLayerDisk:
         # gas layer
         self.Tg0 = Tg0 # gas temperature
         self.qg = qg
+        #self.f_Tg0 = f_Tg0
+        #self.d_qg = d_qg
         self.log_N_gc = log_N_gc
         self.rc_g = rc_g
         self.gamma_g = gamma_g
@@ -640,6 +645,15 @@ class MultiLayerDisk:
         return sig * np.exp( - (z - z0)**2. / (2.*H*H)) / np.sqrt(2. * np.pi) / H
 
 
+    #def _puff_up_layer_exact(self, sig, R, z, H):
+    #    '''
+    #    Without approximation of z<<R.
+    #    '''
+    #    rho0 = sig / np.sqrt(2. * np.pi) / H
+    #    exp = np.exp(R**2. / H**2. * ((1. + z**2/R**2)**(-0.5) - 1.))
+    #    return rho0 * exp
+
+
     def linewidth(self, R, Tg = None, dv_mode = 'thermal', mmol = 2.34):
         # line width
         if dv_mode == 'thermal':
@@ -682,6 +696,25 @@ class MultiLayerDisk:
         tau_d = self.dust_density(Rmid)
 
         return T_g, n_g, vlos, dv, T_d, tau_d
+
+
+    def fastbuild(self, R, phi, z, Rmid, 
+        dv_mode = 'total', 
+        mmol = 30., mu = 2.34, pterm = True,):
+        shape = R.shape
+        shaped = Rmid.shape
+
+        T_g, n_g, vlos, dv, T_d, tau_d = \
+        fastbuild_multilayer(R.ravel(), phi.ravel(), z.ravel(), Rmid.ravel(), 
+            self.log_N_gc, self.rc_g, self.gamma_g, self.Tg0, self.qg,
+            self.z0, self.pz, self.h0, self.ph,
+            self.log_tau_dc, self.rc_d, self.gamma_d, self.Td0, self.qd,
+            self.dv, self.pdv, self.r0,
+            self.ms * Ggrav * Msun, self._inc_rad, self.vsys,
+            mu, mmol, dv_mode, pterm,
+            kb, mH, auTOcm)
+        return T_g.reshape(shape), n_g.reshape(shape), vlos.reshape(shape), \
+        dv.reshape(shape), T_d.reshape(shaped), tau_d.reshape(shaped)
 
 
     def build_cube(self, Tcmb = 2.73, f0 = 230., 

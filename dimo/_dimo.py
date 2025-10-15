@@ -578,8 +578,10 @@ class DiMO(object):#, FitThinModel):
     def __init__(self, model, params_free, params_fixed, 
         beam = None, width = -1, dist = 140., line = None, iline = None, dv_mode = 'total',
         build_args = None, sampling = False, n_subgrid = 1,
-        n_nest = None, zstrech = None, x_nestlim = None, y_nestlim = None, z_nestlim = None,
-        xscale = 0.5, yscale = 0.5, zscale = 0.5, rin = 1., reslim = 10.):
+        n_nest = None, zstrech = None, 
+        x_nestlim = None, y_nestlim = None, z_nestlim = None,
+        xscale = 0.5, yscale = 0.5, zscale = 0.5, 
+        rin = 1., reslim = 10., cosi_lim = 0.5, f_nvbin = 0.33):
 
         # parameter checks
         try:
@@ -590,8 +592,10 @@ class DiMO(object):#, FitThinModel):
         _input_keys = list(params_free.keys()) + list(params_fixed.keys())
         if sorted(_model_keys) != sorted(_input_keys):
             print('ERROR\tModelFitter: input keys do not match model input parameters.')
+            print('ERROR\tModelFitter: input keys: ')
+            print(sorted(_input_keys))
             print('ERROR\tModelFitter: input parameters must be as follows:')
-            print(_model_keys)
+            print(sorted(_model_keys))
             return 0
 
         # set model
@@ -621,6 +625,8 @@ class DiMO(object):#, FitThinModel):
         self.iline = iline
         self.rin = rin
         self.reslim = reslim
+        self.cosi_lim = cosi_lim
+        self.f_nvbin = f_nvbin
 
 
     def fit_cube(self, params: dict, pranges:list, 
@@ -1090,9 +1096,10 @@ class DiMO(object):#, FitThinModel):
         # setup model
         model = Builder(_x, _y, z, v, 
             self.model, nsub = self.n_nest, zstrech = self.zstrech, 
-            reslim = self.reslim, beam = self.beam, width = self.width,
+            reslim = self.reslim, beam = self.beam, 
+            width = self.width, f_nvbin = self.f_nvbin,
             line = self.line, iline = self.iline, rin = self.rin,
-            adoptive_zaxis = True, cosi_lim = 0.5,)
+            adoptive_zaxis = True, cosi_lim = self.cosi_lim)
         model.grid.gridinfo()
 
         # renew grid every fit or not
@@ -1107,7 +1114,8 @@ class DiMO(object):#, FitThinModel):
         model.deproject_grid()
         model.show_model_sideview(
             showfig = False, savefig = True, cmap = 'coolwarm',
-            dv_mode = dv_mode, pterm = pterm)
+            dv_mode = dv_mode, pterm = pterm,
+            outname = 'model_sideview_ini')
 
 
         # fitting
@@ -1129,6 +1137,17 @@ class DiMO(object):#, FitThinModel):
         self.modelcube = modelcube
 
         self.writeout_fitres(outname, BE.criterion)
+
+        # make a side view
+        _params_full = merge_dictionaries(
+            dict(zip(self.pfree_keys, [*self.popt])),
+            self.params_fixed)
+        model.set_model(_params_full)
+        model.deproject_grid()
+        model.show_model_sideview(
+            showfig = False, savefig = True, cmap = 'coolwarm',
+            dv_mode = dv_mode, pterm = pterm,
+            outname = 'model_sideview_fit')
 
         return modelcube
 
