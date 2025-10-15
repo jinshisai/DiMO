@@ -1110,7 +1110,8 @@ class DiMO(object):#, FitThinModel):
         model.deproject_grid()
         model.show_model_sideview(
             showfig = False, savefig = True, cmap = 'coolwarm',
-            dv_mode = dv_mode, pterm = pterm)
+            dv_mode = dv_mode, pterm = pterm,
+            outname = 'model_sideview_ini')
 
 
         # fitting
@@ -1132,6 +1133,17 @@ class DiMO(object):#, FitThinModel):
         self.modelcube = modelcube
 
         self.writeout_fitres(outname, BE.criterion)
+
+        # make a side view
+        _params_full = merge_dictionaries(
+            dict(zip(self.pfree_keys, [*self.popt])),
+            self.params_fixed)
+        model.set_model(_params_full)
+        model.deproject_grid()
+        model.show_model_sideview(
+            showfig = False, savefig = True, cmap = 'coolwarm',
+            dv_mode = dv_mode, pterm = pterm,
+            outname = 'model_sideview_fit')
 
         return modelcube
 
