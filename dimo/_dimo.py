@@ -1047,6 +1047,7 @@ class DiMO(object):#, FitThinModel):
 
                 # renew grid
                 if renew_grid:
+                    _model.renest()
                     _model.deproject_grid()
 
                 # cube on the original grid
@@ -1079,6 +1080,7 @@ class DiMO(object):#, FitThinModel):
 
                 # renew grid
                 if renew_grid:
+                    _model.renest()
                     _model.deproject_grid()
 
                 # cube on the original grid
@@ -1111,6 +1113,7 @@ class DiMO(object):#, FitThinModel):
 
         # make grid
         model.set_model(self._params_ini)
+        model.renest()
         model.deproject_grid()
         model.show_model_sideview(
             showfig = False, savefig = True, cmap = 'coolwarm',
@@ -1143,6 +1146,7 @@ class DiMO(object):#, FitThinModel):
             dict(zip(self.pfree_keys, [*self.popt])),
             self.params_fixed)
         model.set_model(_params_full)
+        model.renest()
         model.deproject_grid()
         model.show_model_sideview(
             showfig = False, savefig = True, cmap = 'coolwarm',
