@@ -20,6 +20,7 @@ from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube, solve_MLRT_c
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
 from .fast_grid import fast_3d_collapse
+from .plt_utils import *
 
 
 ### constants
@@ -61,11 +62,16 @@ class Builder(object):
         super(Builder, self).__init__()
 
         # make observer grid
+        self._x = x
+        self._y = y
+        self._z = z
+        self._v = v
         self.nx, self.ny, self.nz = len(x), len(y), len(z)
         self.grid = Nested3DObsGrid(
         x, y, z, xlim, ylim, nsub, zstrech, reslim, preserve_z = True) # Plane of sky coordinates
         self.grid2D = Nested2DGrid(x, y, xlim, ylim, nsub, reslim)
         self.cosi_lim = cosi_lim
+        self.reslim = reslim
         # Plane of sky coordinates
         self.xs = self.grid.xnest
         self.ys = self.grid.ynest
@@ -167,6 +173,29 @@ class Builder(object):
         return Qrot.reshape(shape)
 
 
+    def renest(self):
+        # 3D grid
+        self.grid.get_nestinglim(
+        self.reslim, dx0 = self.dx0, dy0 = self.dy0) # Plane of sky coordinates
+        self.grid.nest(preserve_z = True)
+        # 2D grid
+        self.grid2D.get_nestinglim(
+        self.reslim, dx0 = self.dx0, dy0 = self.dy0)
+        self.grid2D.nest()
+        # Plane of sky coordinates
+        self.xs = self.grid.xnest
+        self.ys = self.grid.ynest
+        self.zs = self.grid.znest
+        # disk-local coordinates
+        self.xps = None
+        self.yps = None
+        self.zps = None
+        self.Rs = None # R in cylindarical coordinates
+        self.phs = None # phi in cylindarical coordinates
+        # dust layer
+        self.Rmid = None
+
+
     def deproject_grid(self, 
         adoptive_zaxis = True, 
         ):
@@ -176,7 +205,7 @@ class Builder(object):
         xp = self.xs
         yp = self.ys
         zp = self.zs
-        dzp = self.grid.dznest
+        #dzp = self.grid.dznest
         # rotate by PA
         #_xp, _yp = xp, yp
         _xp, _yp = rot2d(xp - self.dx0, yp - self.dy0, self._pa_rad - 0.5 * np.pi)
@@ -370,10 +399,10 @@ class Builder(object):
         T_g, n_g, vlos, dv, T_d, tau_d = self.build_model(
             dv_mode=dv_mode, pterm = pterm)
 
-        #n_g = np.log10(n_g) # in log scale
-        #n_g = self.Rs
-        #n_g = self.xps
-        #vmin, vmax = np.nanmin(n_g), np.nanmax(n_g)
+        #n_g = np.log10(self.n_g) # in log scale
+        #n_g = self.yps
+        #n_g = self.zoffset
+        #vmin, vmax = np.nanmin(n_g) * 0.01, np.nanmax(n_g) * 0.01
         vmax = np.log10(np.nanmax(n_g) * vmax)
         vmin = np.log10(np.nanmax(n_g) * vmin)
 
@@ -381,6 +410,10 @@ class Builder(object):
         #ax = fig.add_subplot(111)
         fig, axes = plt.subplots(1,2)
         ax1, ax2 = axes
+
+        # index of disk center
+        #xi0 = np.argmin((self._x - self.dx0)**2.)
+        #yi0 = np.argmin((self._y - self.dy0)**2.)
 
 
         # from upper to lower
@@ -398,17 +431,13 @@ class Builder(object):
                 ximin, ximax = _grid.xinest[(l+1)*2:(l+2)*2]
                 yimin, yimax = _grid.yinest[(l+1)*2:(l+2)*2]
                 d_plt[ximin:ximax+1,yimin:yimax+1] = np.nan
+                #xi0 = (ximax + ximin) // 2
+                #yi0 = (yimin + yimax) // 2
 
-            #if self.adoptive_zaxis:
-            #    if _grid.preserve_z:
-            #        zoff = self.zoffset[_grid.xypartition[l]:_grid.xypartition[l+1],:]
-            #    else:
-            #        zoff = self.zoffset[_grid.partition[l]:_grid.partition[l+1]]
-
-            #ax1.imshow(d_plt, extent = (zmin + zoff, zmax + zoff, xmin, xmax),
-            #    alpha = 1., vmax = vmax, vmin = vmin, origin = 'upper', cmap = cmap)
-            #print(l, zoff.shape)
             _xx, _yy, _zz = _grid.get_grid(l)
+            xi0, yi0 = np.unravel_index(np.argmin(
+                (_xx[:,:,nz//2] - self.dx0)**2 + (_yy[:,:,nz//2] - self.dy0)**2
+                ), _xx[:,:,nz//2].shape)
 
             if self.adoptive_zaxis:
                 zoffset = _grid.collapse(self.zoffset, upto = l)
@@ -416,9 +445,9 @@ class Builder(object):
                 #_xx, _yy = rot2d(_xx - self.dx0, _yy - self.dy0, 
                 #    self._pa_rad - 0.5 * np.pi)
 
-            im1 = ax1.pcolormesh(_zz[:, ny//2, :], _xx[:, ny//2, :], d_plt[:, ny//2, :], 
+            im1 = ax1.pcolormesh(_zz[:, yi0, :], _xx[:, yi0, :], d_plt[:, yi0, :], #[:, ny//2, :], 
                 alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
-            im2 = ax2.pcolormesh(_zz[nx//2, :, :], _yy[nx//2, :, :], d_plt[nx//2, :, :], 
+            im2 = ax2.pcolormesh(_zz[xi0, :, :], _yy[xi0, :, :], d_plt[xi0, :, :], #[nx//2, :, :]
                 alpha = 1., vmax = vmax, vmin = vmin, cmap = cmap)
             #rect = plt.Rectangle((zmin, xmin), 
             #    zmax - zmin, xmax - xmin, edgecolor = 'white', facecolor = "none",
@@ -432,6 +461,9 @@ class Builder(object):
             ax.set_xlim(gmin, gmax)
             ax.set_ylim(gmin, gmax)
             ax.set_aspect(1)
+
+        for ax, im in zip(axes, [im1, im2]):
+            add_colorbar_toaxis(ax, im, loc = 'top', width = '3%', pad = '3%')
 
         ax1.set_ylabel(r'$x^\prime$ (au)')
         ax1.set_xlabel(r'$z^\prime$ (au)')
