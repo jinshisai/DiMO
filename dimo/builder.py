@@ -198,6 +198,7 @@ class Builder(object):
 
     def deproject_grid(self, 
         adoptive_zaxis = True, 
+        z_rlim = 0.3, cosi_shift = 0.64,# ~50deg
         ):
         '''
         Transfer the plane of sky coordinates to disk local coordinates.
@@ -212,10 +213,32 @@ class Builder(object):
         # rot = - (- (pa - 90.)); two minuses are for coordinate rotation and definition of pa
         # adoptive z axis
         if adoptive_zaxis & (np.abs(np.cos(self._inc_rad)) > self.cosi_lim):
-            # consider z=0 is in the disk midplane
+            # set z=0 is in the disk midplane
             zoffset = - np.tan(self._inc_rad) * _yp # zp_mid(xp, yp)
             #zoffset = dzp * (zoffset // dzp) # shift in steps of dz
+
+            # add further shift for an inclined case
+            if np.abs(np.cos(self._inc_rad)) < cosi_shift:
+                theta = np.arctan(z_rlim)
+                # some math
+                la = np.tan(self._inc_rad - theta) * _yp
+                lb = np.tan(self._inc_rad) * _yp - la
+                lc = np.tan(self._inc_rad + theta) * _yp - la - lb
+                zoffset += (lb - lc)
             self.zoffset = zoffset
+            '''
+            if np.abs(np.tan(self._inc_rad)) > z_rlim:
+                zmin = np.nanmin(zp, axis = 1)
+                side_yp = _yp > 0.
+                side_ym = _yp <= 0.
+                zmax = np.nanmax(zp, axis = 1)
+                zoffset = np.empty_like(zp)
+                zoffset[side_yp] = - np.tile(zmin, (self.grid.nz,1)).T[side_yp] # make zmin = 0
+                zoffset[side_ym] =  - np.tile(zmax, (self.grid.nz,1)).T[side_ym]  # make zmin = 0
+                self.zoffset = zoffset
+            else:
+                self.zoffset = zoffset
+            '''
             _zp = zp + zoffset # shift z center back to rectanglar coordinates
             x, y, z = xrot(_xp, _yp, _zp, self._inc_rad) # rot = - (-inc)
             #y /= np.cos(self._inc_rad)
