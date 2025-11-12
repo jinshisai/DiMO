@@ -198,7 +198,7 @@ class Builder(object):
 
     def deproject_grid(self, 
         adoptive_zaxis = True, 
-        z_rlim = 0.3, cosi_shift = 0.64,# ~50deg
+        z_rlim = 0.3, cosi_shift = 0.,# ~50deg
         ):
         '''
         Transfer the plane of sky coordinates to disk local coordinates.
