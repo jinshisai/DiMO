@@ -9,7 +9,8 @@ class Nested2DGrid(object):
     """docstring for NestedGrid"""
     def __init__(self, x, y,
         xlim: list | None = None, ylim: list | None = None, 
-        nsub: list | None = None, reslim = 10,):
+        nsub: list | None = None, reslim = 10,
+        dx0: float = 0., dy0: float = 0.):
         super(Nested2DGrid, self).__init__()
         # save axes of the mother grid
         self.x = x
@@ -47,29 +48,35 @@ class Nested2DGrid(object):
         self.yinest = [-1,-1]
         # nest
         if self.nlevels > 1:
-            if (np.array([xlim, ylim]) == None).any():
-                _xlim, _ylim = self.get_nestinglim(reslim = reslim)
-                if xlim is None: xlim = _xlim
-                if ylim is None: ylim = _ylim
-            self.xlim, self.ylim = xlim.copy(), ylim.copy()
-            self.xlim.insert(0, [xe[0], xe[-1]])
-            self.ylim.insert(0, [ye[0], ye[-1]])
+            self.get_nestinglim(reslim, dx0 = dx0, dy0 = dy0)
+            if xlim is not None:
+                self.xlim = xlim
+                self.xlim.insert(0, [xe[0], xe[-1]])
+            if ylim is not None:
+                self.ylim = ylim
+                self.ylim.insert(0, [ye[0], ye[-1]])
             self.nest()
         else:
             self.xlim = [[xe[0], xe[-1]]]
             self.ylim = [[ye[0], ye[-1]]]
 
 
-    def get_nestinglim(self, reslim = 5):
+    def get_nestinglim(self, reslim, dx0 = 0., dy0 = 0.):
         xlim = []
         ylim = []
         _dx, _dy = np.abs(self.dx), np.abs(self.dy)
+        _dx0 = (dx0 // _dx) * _dx
+        _dy0 = (dy0 // _dy) * _dy
         for l in range(self.nlevels - 1):
-            xlim.append([-_dx * reslim, _dx * reslim])
-            ylim.append([-_dy * reslim, _dy * reslim])
+            xlim.append([-_dx * reslim + _dx0, _dx * reslim + _dx0])
+            ylim.append([-_dy * reslim + _dy0, _dy * reslim + _dy0])
             _dx, _dy = np.abs(np.array([_dx, _dy])) / self.nsub[l]
+            _dx0 = (dx0 // _dx) * _dx
+            _dy0 = (dy0 // _dy) * _dy
 
-        return xlim, ylim
+        self.xlim, self.ylim = xlim, ylim
+        self.xlim.insert(0, [self.xe[0], self.xe[-1]])
+        self.ylim.insert(0, [self.ye[0], self.ye[-1]])
 
 
     def check_symmetry(self, decimals = 5):
@@ -109,6 +116,8 @@ class Nested2DGrid(object):
         l - 1 is the mother grid layer. l is the child grid layer.
         '''
         # initialize
+        self.xinest = [-1,-1]
+        self.yinest = [-1,-1]
         partition = [0]
         xnest = np.array([])
         ynest = np.array([])
@@ -946,7 +955,7 @@ class Nested3DObsGrid(object):
     def __init__(self, x, y, z, 
         xlim = None, ylim = None,
         nsub = None, zstrech = None, reslim = 20,
-        preserve_z = False):
+        preserve_z = False, dx0 = 0., dy0 = 0.):
         super(Nested3DObsGrid, self).__init__()
         # save axes of the mother grid
         self.x = x
@@ -1000,15 +1009,16 @@ class Nested3DObsGrid(object):
         # nest
         self.preserve_z = preserve_z
         if self.nlevels > 1:
+            # zlim
             self.get_zlim()
-            self.zlim.insert(0, [ze[0], ze[-1]])
-            if (np.array([xlim, ylim]) == None).any():
-                _xlim, _ylim = self.get_nestinglim(reslim = reslim)
-                if xlim is None: xlim = _xlim
-                if ylim is None: ylim = _ylim
-            self.xlim, self.ylim = xlim.copy(), ylim.copy()
-            self.xlim.insert(0, [xe[0], xe[-1]])
-            self.ylim.insert(0, [ye[0], ye[-1]])
+            # xylim
+            self.get_nestinglim(reslim, dx0 = dx0, dy0 = dy0)
+            if xlim is not None:
+                self.xlim = xlim # update
+                self.xlim.insert(0, [xe[0], xe[-1]])
+            if ylim is not None:
+                self.ylim = ylim # update
+                self.ylim.insert(0, [ye[0], ye[-1]])
             self.nest(preserve_z = preserve_z)
         else:
             self.xlim = [xe[0], xe[-1]]
@@ -1016,16 +1026,24 @@ class Nested3DObsGrid(object):
             self.zlim = [ze[0], ze[-1]]
 
 
-    def get_nestinglim(self, reslim = 5):
+    def get_nestinglim(self, reslim, dx0 = 0, dy0 = 0):
         xlim = []
         ylim = []
         _dx, _dy = np.abs(self.dx), np.abs(self.dy)
+        _dx0 = (dx0 // _dx) * _dx
+        _dy0 = (dy0 // _dy) * _dy
         for l in range(self.nlevels - 1):
-            xlim.append([-_dx * reslim, _dx * reslim])
-            ylim.append([-_dy * reslim, _dy * reslim])
+            xlim.append([-_dx * reslim + _dx0, _dx * reslim + _dx0])
+            ylim.append([-_dy * reslim + _dy0, _dy * reslim + _dy0])
             _dx, _dy = np.abs(np.array([_dx, _dy])) / self.nsub[l]
+            _dx0 = (dx0 // _dx) * _dx
+            _dy0 = (dy0 // _dy) * _dy
 
-        return xlim, ylim
+        self.xlim = xlim
+        self.ylim = ylim
+        #print(ylim)
+        self.xlim.insert(0, [self.xe[0], self.xe[-1]])
+        self.ylim.insert(0, [self.ye[0], self.ye[-1]])
 
 
     def get_zlim(self):
@@ -1041,6 +1059,7 @@ class Nested3DObsGrid(object):
             ze_sub = np.linspace(_zmin, _zmax, self.nz + 1)
             z = 0.5 * (ze_sub[1:] + ze_sub[:-1])
         self.zlim = zlim
+        self.zlim.insert(0, [self.ze[0], self.ze[-1]])
 
 
     def get_grid(self, l):
@@ -1166,6 +1185,8 @@ class Nested3DObsGrid(object):
         l - 1 is the mother grid layer. l is the child grid layer.
         '''
         # initialize
+        self.xinest = [-1,-1]
+        self.yinest = [-1,-1]
         partition = [0]
         xypartition = [0]
         xnest = np.array([])
@@ -1786,7 +1807,6 @@ def nestgrid_2D(x, y, xlim, ylim, nsub, decimals = 4.):
     ye_sub = np.linspace(yemin, yemax, _ny * nsub + 1)
     x_sub = 0.5 * (xe_sub[:-1] + xe_sub[1:])
     y_sub = 0.5 * (ye_sub[:-1] + ye_sub[1:])
-    #xx_sub, yy_sub = np.meshgrid(x_sub, y_sub)
     return ximin, ximax, yimin, yimax, x_sub, y_sub
 
 
