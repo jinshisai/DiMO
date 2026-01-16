@@ -14,7 +14,7 @@ from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, Nested3DObsGrid, Sub
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
-from .fastbuild import fastbuild_twocompdisk, fastbuild_multilayer
+from .fastbuild import fastbuild_twocompdisk, fastbuild_multilayer, fastbuild_twocompdisk_brokendvpower
 
 ### constants
 Ggrav  = constants.G.cgs.value        # Gravitational constant
@@ -946,6 +946,98 @@ class MultiLayerRingDisk(MultiLayerDisk):
         ng[zin_r] = self.puff_up_layer(N_g[zin_r], z[zin_r], z0r[zin_r], h_in[zin_r]) / auTOcm # cm^-3
 
         return ng
+
+
+@dataclass(slots=True)
+class TwoCompDisk_BrokenDelvPower(TwoComponentDisk):
+    # add parameters
+    rb_dv: float = 100. # radius where power changes
+    pdv_out: float = 0. # power at outer radii
+    # geometrical parameters (over write)
+    #inc: float = 0.
+    #pa: float = 0.
+
+    def set_params(self, 
+        Td0 = 400., qd = 0.5, log_tau_dc = 0., rc_d = 100., gamma_d = 1., 
+        Tg0 = 400., qg = 0.5, log_N_gc = -10., rc_g = 100., gamma_g = 1., 
+        inc = 0., pa = 0., ms = 1., vsys = 0, 
+        dx0=0., dy0=0., r0 = 1., dv = 0., pdv = 0.25, rb_dv = 100., pdv_out = 0.):
+        '''
+
+        Parameters
+        ----------
+         Td0
+         qd
+         Tg0 (float): K
+         qg (float):
+         z0 (float): au
+         hp (float):
+         r0 (float): au
+         tau_dc (float):
+         rc_d (float): au
+         gamma_d (float):
+         tau_gc (float):
+         rc_g (float): au
+         gamma_g (float):
+         inc (float): deg
+         pa (float): deg
+         ms (float): Msun
+         vsys (float): km/s
+        '''
+        # initialize parameters
+        # dust layer
+        self.Td0 = Td0
+        self.qd  = qd
+        self.log_tau_dc = log_tau_dc
+        self.rc_d = rc_d
+        self.gamma_d = gamma_d
+        # gas layer
+        self.Tg0 = Tg0 # gas temperature
+        self.qg = qg
+        self.log_N_gc = log_N_gc
+        self.rc_g = rc_g
+        self.gamma_g = gamma_g
+        # geometry & velocity
+        self.inc = inc
+        self.pa = pa
+        self.ms = ms
+        self.vsys = vsys
+        # positional offsets
+        self.dx0 = dx0
+        self.dy0 = dy0
+        # reference radius
+        self.r0 = r0
+        # line width
+        self.dv = dv
+        self.pdv = pdv
+        self.rb_dv = rb_dv
+        self.pdv_out = pdv_out
+
+
+        # hidden parameters
+        self._inc_rad = np.radians(inc)
+        self._pa_rad = np.radians(pa)
+        self._side = np.sign(np.cos(self._inc_rad)) # cos(-i) = cos(i)
+
+
+
+    def fastbuild(self, R, phi, z, Rmid, 
+        dv_mode = 'total', 
+        mmol = 30., mu = 2.34, pterm = True,):
+        shape = R.shape
+        shaped = Rmid.shape
+
+        T_g, n_g, vlos, dv, T_d, tau_d = \
+        fastbuild_twocompdisk_brokendvpower(R.ravel(), phi.ravel(), z.ravel(), Rmid.ravel(), 
+            self.log_N_gc, self.rc_g, self.gamma_g, self.Tg0, self.qg,
+            self.log_tau_dc, self.rc_d, self.gamma_d, self.Td0, self.qd,
+            self.dv, self.pdv, self.rb_dv, self.pdv_out, self.r0,
+            self.ms * Ggrav * Msun, self._inc_rad, self.vsys,
+            mu, mmol, dv_mode, pterm,
+            kb, mH, auTOcm)
+        return T_g.reshape(shape), n_g.reshape(shape), vlos.reshape(shape), \
+        dv.reshape(shape), T_d.reshape(shaped), tau_d.reshape(shaped)
+
 
 
 
