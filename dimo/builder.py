@@ -286,10 +286,7 @@ class Builder(object):
 
 
     def build_model(self, dv_mode, pterm):
-        #T_g, n_g, vlos, dv, T_d, tau_d = self.model.build(
-        #   self.Rs, self.phs, self.zps, self.Rmid,
-        #    dv_mode = dv_mode, mmol = self.mmol, pterm = pterm)
-        T_g, n_g, vlos, dv, T_d, tau_d = self.model.fastbuild(
+        T_g, n_g, vlos, dv, T_d, tau_d = self.model.build(
             self.Rs, self.phs, self.zps, self.Rmid,
             dv_mode = dv_mode, mmol = self.mmol, pterm = pterm)
         return T_g, n_g, vlos, dv, T_d, tau_d
@@ -406,6 +403,39 @@ class Builder(object):
                 ])
                 Iv = np.nanmean(Iv_avg, axis = 0)
 
+
+        # Convolve beam if given
+        if self.beam is not None:
+            Iv = beam_convolution(self.grid2D.xx.copy(), self.grid2D.yy.copy(), Iv, 
+                self.beam, self.gaussbeam)
+
+        return Iv
+
+
+
+    def build_cont(self, freq,
+        Tcmb = 2.73, dist = 140., return_Ttau = False):
+        #start = time.time()
+        _, _, _, _, T_d, tau_d = self.build_model()
+        #end = time.time()
+        #print('building model took %.2fs'%(end-start))
+
+        # return tau
+        if return_Ttau:
+            return self.grid2D.collapse(T_d), self.grid2D.collapse(tau_d)
+
+        # radiative transfer
+        _Bv = lambda T, v: Bvppx(T, v, 
+            self.grid2D.dx, self.grid2D.dy, 
+            dist = dist, au = True) # in unit of Jy/pixel with the final pixel size
+        _Bv_cmb = _Bv(Tcmb, freq)
+        _Bv_d   = _Bv(T_d, freq)
+
+        # dust intensity
+        Iv_d = (_Bv_d - _Bv_cmb) * (1. - np.exp(- tau_d))
+        Iv = np.transpose(
+            self.grid2D.collapse(Iv_d.T, collapse_mode = 'mean'),
+            axes = (1, 0)) # (x, y,) to (y, x)
 
         # Convolve beam if given
         if self.beam is not None:
@@ -637,7 +667,7 @@ class Builder(object):
 
 class Builder_SSDisk(object):
     '''
-    A disk model with Two Thick Layers (TTL) with a thin dust layer.
+    Builder for a geometrically thin disk model.
 
     '''
 
@@ -852,7 +882,7 @@ class Builder_SSDisk(object):
 
 class Builder_SLD(Builder_SSDisk):
     '''
-    Builder for Two-Layer Disk Model.
+    Builder for Single Layer Disk Model.
 
     '''
 

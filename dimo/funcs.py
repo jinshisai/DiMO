@@ -62,7 +62,7 @@ def beam_convolution(xx, yy, image, beam, beam_image = None):
     Perform beam convolution. The input image must be in 
     a unit of an arbitral intensity per pixel, and then the output image
     will be in a unit of the intensity per beam.
-    
+
     Parameters
     ----------
     xx, yy (array): 2D grid arrays.
