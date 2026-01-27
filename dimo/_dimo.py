@@ -11,7 +11,7 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Callable
 
-from .models import MultiLayerDisk, ThreeLayerDisk, SingleLayerDisk, SSDisk
+from .models import MultiLayerDisk, SingleLayerDisk, SSDisk #ThreeLayerDisk, 
 from .grid import Nested2DGrid, SubGrid2D, Nested3DObsGrid
 from .mpe import BayesEstimator
 from .builder import Builder, Builder_SSDisk

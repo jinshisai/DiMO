@@ -19,7 +19,7 @@ from .grid import Nested3DObsGrid, Nested2DGrid, Nested1DGrid, SubGrid2D, SubGri
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube, solve_MLRT_cube
 from .molecule import Molecule
 from .libcube import spectra, transfer, linecube
-from .fast_grid import fast_3d_collapse
+#from .fast_grid import fast_3d_collapse
 from .plt_utils import *
 
 
@@ -50,8 +50,9 @@ class Builder(object):
         reslim: float = 10, rin: float = 1.,
         adoptive_zaxis: bool = True, cosi_lim: float = 0.5, 
         beam: list | None = None, width: float = -1,
-        f_nvbin: float = 0.33, line: str | None = None, iline: int | None = None,
-        Tmin: float = 1., Tmax: float = 2000., nTex: int = 4096,):
+        f_nvbin: float = 0.33, line: str | None = None,
+        iline: int | None = None, ilinemode = 'index', database = 'lamda',
+        Tmin: float = 1., Tmax: float = 500., nTex: int = 1024,):
         '''
         Set up model grid and initialize model.
 
@@ -116,14 +117,16 @@ class Builder(object):
         # line
         self.line = line
         self.iline = iline
+        _freq = True if ((ilinemode == 'freq') | (ilinemode == 'frequency')) else False
         if (line is not None) * (iline is not None):
-            self.mol = Molecule(line)
-            self.mol.moldata[line].partition_grid(Tmin, Tmax, nTex, scale = 'linear')
+            self.mol = Molecule(line, database = database)
+            self.mol.moldata[line].partition_grid()#Tmin, Tmax, nTex, scale = 'linear')
             self.mmol = self.mol.moldata[line].weight
-            self.Qgrid = (self.mol.moldata[line]._Tgrid, self.mol.moldata[line]._PFgrid)
+            self.Qgrid = (self.mol.moldata[line].Tgrid, self.mol.moldata[line].Qgrid)
             self.trans, self.freq, self.Aul, self.gu, self.gl, self.Eu, self.El = \
-            self.mol.moldata[line].params_trans(iline)
+            self.mol.moldata[line].params_trans(iline, freq = _freq)
             self.f = doppler_v2f(self.v *1.e5, self.freq)
+            print('Transition, freq: %s, %.6f GHz'%(self.trans, self.freq *1.e-9))# self.Aul, self.gu, self.gl, self.Eu, self.El)
 
         # beam
         if beam is not None:
