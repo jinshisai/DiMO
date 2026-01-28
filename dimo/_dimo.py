@@ -576,7 +576,8 @@ class DiMO(object):#, FitThinModel):
      params_fixed (dict): Fixed parameters
     """
     def __init__(self, model, params_free, params_fixed, 
-        beam = None, width = -1, dist = 140., line = None, iline = None, dv_mode = 'total',
+        beam = None, width = -1, dist = 140., dv_mode = 'total',
+        line = None, iline = None, ilinemode = 'index', database = 'lamda',
         build_args = None, sampling = False, n_subgrid = 1,
         n_nest = None, zstrech = None, 
         x_nestlim = None, y_nestlim = None, z_nestlim = None,
@@ -623,6 +624,8 @@ class DiMO(object):#, FitThinModel):
         self.xscale, self.yscale = xscale, yscale
         self.line = line
         self.iline = iline
+        self.ilinemode = ilinemode
+        self.database = database
         self.rin = rin
         self.reslim = reslim
         self.cosi_lim = cosi_lim
@@ -1100,8 +1103,9 @@ class DiMO(object):#, FitThinModel):
             self.model, nsub = self.n_nest, zstrech = self.zstrech, 
             reslim = self.reslim, beam = self.beam, 
             width = self.width, f_nvbin = self.f_nvbin,
-            line = self.line, iline = self.iline, rin = self.rin,
-            adoptive_zaxis = True, cosi_lim = self.cosi_lim)
+            line = self.line, iline = self.iline, ilinemode = self.ilinemode,
+            database = self.database,
+            rin = self.rin, adoptive_zaxis = True, cosi_lim = self.cosi_lim)
         model.grid.gridinfo()
 
         # renew grid every fit or not
