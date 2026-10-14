@@ -60,6 +60,39 @@ def glnprof_series(v, v0, delv, unit_scale = 1.):
 
 
 @njit(parallel=True, cache=True)
+def boxlnprof_series(v, v0, unit_scale = 1.):
+    '''
+    Generate series of normalized boxcar line profiles.
+
+    Parameters
+    ----------
+     v (1D array): velocity axis
+     v0 (1D array): series of line centre
+     delv (1D array): series of linewidths
+    '''
+    nd = v0.size
+    nv = len(v)
+    dv_cell = v[1] - v[0]
+
+    #lnprof = np.zeros((nv, nd)) # this order for later
+    lnprof = np.zeros((nd, nv)) # new
+    for i in prange(nd):
+        v0i = v0[i]
+
+        for j in range(nv):
+            vch_l = v[j] - 0.5 * dv_cell
+            vch_u = v[j] + 0.5 * dv_cell
+            if (v0i >= vch_l) * (v0i < vch_u):
+                lnprof[i,j] = 1.
+            else:
+                lnprof[i,j] = 0.
+        prof_int = np.sum(lnprof[i,:] * dv_cell)
+        lnprof[i,:] *= unit_scale / dv_cell
+
+    return lnprof
+
+
+@njit(parallel=True, cache=True)
 def normalize_glnprofs(profs, v, v0, delv, unit_scale = 1.):
     '''
     Generate series of normalized Gaussian line profiles.

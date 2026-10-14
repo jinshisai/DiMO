@@ -3,7 +3,7 @@ from numba import jit, njit, prange, config
 
 
 @njit(parallel=True)# cache=True)
-def fastbuild_twocompdisk(R, phi, z, Rmid, 
+def fastbuild_twocompdisk(R, phi, z, Rmid,
     log_N_gc, rc_g, gamma_g, Tg0, qg,
     log_Sig_dc, rc_d, gamma_d, Td0, qd,
     dv0, pdv, r0,
@@ -70,6 +70,14 @@ def fastbuild_twocompdisk(R, phi, z, Rmid,
             rc_g * auTOcm, gamma_g, qg, cs2)
         vlos[i] = vphi * np.cos(phii) * np.sin(inc_rad) * 1.e-5 + vsys
 
+        # for debug
+        #vlos[i] *= (np.exp(- (Ri/ rc_g)**2.))**0.01
+        #if (Ri - 200.)**2. < 1.:
+        #    #print('Ri (au), vrot, vkep, cs (km/s)')
+        #    #print((Ri, vphi * 1e-5, vkep(Ri * auTOcm, msG, zi * auTOcm) * 1.e-5, np.sqrt(cs2) * 1e-5))
+        #    print('Ri (au), vlos,rot, vlos,kep (km/s)')
+        #    print((Ri, vlos[i], vsys + vkep(Ri * auTOcm, msG, zi * auTOcm) * np.cos(phii) * np.sin(inc_rad) * 1.e-5))
+
         # dv
         dv[i] = linewidth(Ri, dv0, r0, pdv, kb, T, mmol, mH)
 
@@ -85,8 +93,8 @@ def fastbuild_twocompdisk(R, phi, z, Rmid,
 
 
 @njit(parallel=True)# cache=True)
-def fastbuild_multilayer(R, phi, z, Rmid, 
-    log_N_gc, rc_g, gamma_g, Tg0, qg, 
+def fastbuild_multilayer(R, phi, z, Rmid,
+    log_N_gc, rc_g, gamma_g, Tg0, qg,
     z0, pz, h0, ph,
     log_Sig_dc, rc_d, gamma_d, Td0, qd,
     dv0, pdv, r0,
@@ -123,7 +131,7 @@ def fastbuild_multilayer(R, phi, z, Rmid,
         linewidth = lambda r, dv0, r0, pdv, kb, Tg, mmol, mH: \
         linewidth_tnt(r, dv0, r0, pdv, kb, Tg, mmol, mH)
 
-
+    # gas
     for i in prange(nd):
         Ri = R[i]
         phii = phi[i]
@@ -152,7 +160,7 @@ def fastbuild_multilayer(R, phi, z, Rmid,
         # dv
         dv[i] = linewidth(Ri, dv0, r0, pdv, kb, T, mmol, mH)
 
-
+    # dust
     for i in prange(ndd):
         Rmidi = Rmid[i]
         T_d[i] = Td0 * (Rmidi / r0)**(-qd)
@@ -164,7 +172,8 @@ def fastbuild_multilayer(R, phi, z, Rmid,
 
 
 @njit(parallel=True)# cache=True)
-def fastbuild_twocompdisk_brokendvpower(R, phi, z, Rmid, 
+def fastbuild_twocompdisk_brokendvpower(
+    R, phi, z, Rmid,
     log_N_gc, rc_g, gamma_g, Tg0, qg,
     log_Sig_dc, rc_d, gamma_d, Td0, qd,
     dv0, pdv, rb_dv, pdv_out, r0,

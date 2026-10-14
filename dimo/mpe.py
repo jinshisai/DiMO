@@ -74,7 +74,7 @@ class BayesEstimator():
     '''
 
     # initialize
-    def __init__(self, axes: list, data: np.ndarray, 
+    def __init__(self, axes: list, data: np.ndarray,
         sig_d: float or np.ndarray, model: Callable,
         lnlike: Callable = gauss_lnlike, lnprior: Callable = uniform_lnprior):
         '''
@@ -82,7 +82,7 @@ class BayesEstimator():
         Parameters
         ----------
         axes (list): Coordinates of the data set. Must be given as a list containing
-            all dimentional coordinates (e.g., [x, y, z] for three dimention case, 
+            all dimentional coordinates (e.g., [x, y, z] for three dimention case,
             where x, y and z each is a coordinate array for the axis).
         data (ndarray): Observed/simulated data set.
         sig_d (ndarray): Uncertainty of the data
@@ -108,7 +108,7 @@ class BayesEstimator():
         nwalkers=None, nrun=5000, nburn=500, labels=[], show_progress=True,
         f_rand_init=0.1, credible_interval=0.68, show_results=True,
         optimize_ini=True, moves=emcee.moves.StretchMove(), symmetric_error=False,
-        npool=1, errtype='gauss', savefig = True, savesampler = True,):
+        npool=1, errtype='gauss', savefig = True, savesampler = True, restart = False):
         '''
         A wrapper to run MCMC with emcee.
 
@@ -172,12 +172,28 @@ class BayesEstimator():
         p0 = [pini + random[:,i] for i in range(nwalkers)]
 
 
-        # save samples?
+        # save samples
+        sample_file = outname + '_sample.h5'
         if savesampler:
-            backend = emcee.backends.HDFBackend(outname + '_sample.h5')
-            backend.reset(nwalkers, ndim)
+            backend = emcee.backends.HDFBackend(sample_file)
+
+            # continue from saved samples
+            if restart:
+                if backend.iteration == 0:
+                    raise ValueError(f'Cannot restart: {sample_file} has no saved samples.')
+
+                nwalkers_backend, ndim_backend = backend.shape
+                if nwalkers_backend != nwalkers or ndim_backend != ndim:
+                    raise ValueError('Saved sampler shape does not match this run.')
+
+                p0_run = None
+                print(f'Restarting MCMC from {sample_file} at step {backend.iteration}')
+            else:
+                backend.reset(nwalkers, ndim)
+                p0_run = p0
         else:
             backend = None
+            p0_run = p0
 
 
         # Begin MCMC run
@@ -203,18 +219,18 @@ class BayesEstimator():
         if npool > 1:
             with Pool(npool) as pool:
                 # Choose sampler
-                sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, 
+                sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,
                         args=[self.pranges, self.data, self.sig_d, self.model, *self.axes],
                         pool=pool, moves=moves, backend = backend)
                 # Run nrun steps showing progress
-                results = sampler.run_mcmc(p0, nrun, progress=True)
+                results = sampler.run_mcmc(p0_run, nrun, progress=show_progress)
         else:
             # Choose sampler
-            sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob, 
+            sampler = emcee.EnsembleSampler(nwalkers, ndim, lnprob,
                     args=[self.pranges, self.data, self.sig_d, self.model, *self.axes],
                     moves=moves, backend = backend)
             # Run nrun steps showing progress
-            results = sampler.run_mcmc(p0, nrun, progress=True,)
+            results = sampler.run_mcmc(p0_run, nrun, progress=show_progress)
         self.sampler = sampler
         self.results = results
 
@@ -242,7 +258,7 @@ class BayesEstimator():
                     hist, bin_e = np.histogram(samples[:, i], bins=int(np.sqrt(len(samples[:, i]))))
                     bin_c = 0.5*(bin_e[:-1] + bin_e[1:])
                     if errtype == 'gauss':
-                        p_mcmc, _ = op.curve_fit(gauss1d, bin_c, hist, 
+                        p_mcmc, _ = op.curve_fit(gauss1d, bin_c, hist,
                             p0=[np.nanmax(hist), np.mean(samples[:, i]), np.std(samples[:, i])])
                         mn = p_mcmc[1]
                         err = p_mcmc[2]
@@ -258,7 +274,7 @@ class BayesEstimator():
                 print('mode lower upper')
                 f.write('# param 50th %.fth %.fth\n'%(50*(1. - credible_interval), 50*(1. + credible_interval)))
                 for i in range(ndim):
-                    p_mcmc = np.percentile(samples[:, i], 
+                    p_mcmc = np.percentile(samples[:, i],
                         [50*(1. - credible_interval), 50, 50*(1. + credible_interval)])
                     q = np.diff(p_mcmc)
                     outtxt = '%s %13.6e %13.6e %13.6e\n'%(labels[i], p_mcmc[1], q[0], q[1])
@@ -270,7 +286,7 @@ class BayesEstimator():
         if any([show_results, savefig]):
             # Chain plot
             for n0, fout in zip(
-                [0, nburn], 
+                [0, nburn],
                 [out_chain + '_full.pdf', out_chain + '_conv.pdf']):
                 fig, axes = plt.subplots(ndim, 1, figsize=(11.69, 8.27), sharex=True)
                 xplot = np.arange(n0, nrun, 1)

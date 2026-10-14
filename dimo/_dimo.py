@@ -11,14 +11,12 @@ from datetime import datetime
 from dataclasses import dataclass
 from typing import Callable
 
-from .models import MultiLayerDisk, ThreeLayerDisk, SingleLayerDisk, SSDisk
+from .models import MultiLayerDisk, SingleLayerDisk, SSDisk
 from .grid import Nested2DGrid, SubGrid2D, Nested3DObsGrid
 from .mpe import BayesEstimator
 from .builder import Builder, Builder_SSDisk
 
-
-np.random.seed(42)
-
+# np.random.seed(42); for debug
 
 ### constants
 Ggrav  = constants.G.cgs.value        # Gravitational constant
@@ -34,10 +32,8 @@ hp     = constants.h.cgs.value # Planck constant [erg s]
 # unit
 auTOcm = units.au.to('cm') # 1 au (cm)
 
-
 # Ignore divide-by-zero warning
 np.seterr(divide='ignore')
-
 
 # Fitters
 class FitThinModel(object):
@@ -49,8 +45,8 @@ class FitThinModel(object):
      params_free (dict): free parameters.
      params_fixed (dict): Fixed parameters
     """
-    def __init__(self, model, params_free, params_fixed, 
-        beam = None, dist = 140., build_args = None, 
+    def __init__(self, model, params_free, params_fixed,
+        beam = None, dist = 140., build_args = None,
         sampling = False, n_subgrid = 3,
         n_nstgrid = 1, xscale = 0.5, yscale = 0.5):
         super(FitThinModel, self).__init__()
@@ -84,11 +80,10 @@ class FitThinModel(object):
         self.n_nstgrid = n_nstgrid
         self.xscale, self.yscale = xscale, yscale
 
-
     # define fitting function
     def fit_cube(self, params, pranges, d, derr, xx, yy, v,
-        outname = 'modelfitter_results', nwalkers=None, 
-        nrun=2000, nburn=1000, labels=[], show_progress=True, 
+        outname = 'modelfitter_results', nwalkers=None,
+        nrun=2000, nburn=1000, labels=[], show_progress=True,
         optimize_ini=False, moves=emcee.moves.WalkMove(), symmetric_error=False,
         npool = 1,):
         # drop unecessary axis
@@ -111,7 +106,7 @@ class FitThinModel(object):
             model = fmodel(*x, *params)
 
             # Likelihood function (in log)
-            exp = -0.5 * np.nansum((d-model)**2/(derr*derr) 
+            exp = -0.5 * np.nansum((d-model)**2/(derr*derr)
                 + np.log(2.*np.pi*derr*derr)) / Rbeam_pix
             if np.isnan(exp):
                 return -np.inf
@@ -147,7 +142,7 @@ class FitThinModel(object):
                 model = self.model(*params_full)
                 # cube on the original grid
                 modelcube = model.build_cube_subgrid(
-                    xx, yy, v, self.n_subgrid, 
+                    xx, yy, v, self.n_subgrid,
                     *self.build_args)
                 return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
         elif self.n_nstgrid > 1:
@@ -178,7 +173,7 @@ class FitThinModel(object):
                     # cube on the original grid
                     modelcube = model.build_cube(xx, yy, v, *self.build_args)
                     # cube on the nested grid
-                    modelcube_sub = model.build_cube(xx_sub, yy_sub, 
+                    modelcube_sub = model.build_cube(xx_sub, yy_sub,
                         v, *self.build_args)[:, yi:-yi, xi:-xi]
                     # replace
                     for i in range(len(v)):
@@ -208,7 +203,7 @@ class FitThinModel(object):
                     # cube on the original grid
                     modelcube = model.build_cube(xx, yy, v, *self.build_args)
                     # cube on the nested grid
-                    modelcube_sub = model.build_cube(xx_sub, yy_sub, 
+                    modelcube_sub = model.build_cube(xx_sub, yy_sub,
                         v, *self.build_args)
                     # replace
                     for i in range(len(v)):
@@ -260,12 +255,10 @@ class FitThinModel(object):
         self.modelcube = modelcube
         return modelcube
 
-
-
     # define fitting function
     def fit_cont(self, params, pranges, d, derr, xx, yy,
-        outname = 'modelfitter_results', nwalkers=None, 
-        nrun=2000, nburn=1000, labels=[], show_progress=True, 
+        outname = 'modelfitter_results', nwalkers=None,
+        nrun=2000, nburn=1000, labels=[], show_progress=True,
         optimize_ini=False, moves=emcee.moves.WalkMove(), symmetric_error=False,
         npool = 1,):
         # drop unecessary axis
@@ -290,7 +283,7 @@ class FitThinModel(object):
             model = fmodel(*x, *params)
 
             # Likelihood function (in log)
-            exp = -0.5 * np.nansum((d-model)**2/(derr*derr) 
+            exp = -0.5 * np.nansum((d-model)**2/(derr*derr)
                 + np.log(2.*np.pi*derr*derr)) / Rbeam_pix
             if np.isnan(exp):
                 return -np.inf
@@ -374,7 +367,7 @@ class FitThinModel(object):
                     # cube on the original grid
                     modelim = model.build_cont(xx, yy, *self.build_args)
                     # cube on the nested grid
-                    modelim_sub = model.build_cont(xx_sub, yy_sub, 
+                    modelim_sub = model.build_cont(xx_sub, yy_sub,
                         *self.build_args)
                     # replace
                     modelim[where_sub] = \
@@ -425,7 +418,6 @@ class FitThinModel(object):
         return modelim
 
 
-
 # Disk Fitter
 class Fit3DModel(object):
     """docstring for Fitter
@@ -436,15 +428,15 @@ class Fit3DModel(object):
      params_free (dict): free parameters.
      params_fixed (dict): Fixed parameters
     """
-    def __init__(self, model, params_free, params_fixed, 
-        beam = None, dist = 140., build_args = None, 
+    def __init__(self, model, params_free, params_fixed,
+        beam = None, dist = 140., build_args = None,
         sampling = False, n_subgrid = 1,
         n_nstgrid = 1, xscale = 0.5, yscale = 0.5, zscale = 0.5):
         super(DiMO, self).__init__()
         '''
-        model, params_free, params_fixed, 
-            beam = beam, dist = dist, build_args = build_args, 
-            sampling = sampling, n_subgrid = n_subgrid, n_nstgrid = n_nstgrid, 
+        model, params_free, params_fixed,
+            beam = beam, dist = dist, build_args = build_args,
+            sampling = sampling, n_subgrid = n_subgrid, n_nstgrid = n_nstgrid,
             xscale = xscale, yscale = yscale, zscale = zscale
         '''
         #super(Fit3DModel, self).__init__()
@@ -575,12 +567,13 @@ class DiMO(object):#, FitThinModel):
      params_free (dict): free parameters.
      params_fixed (dict): Fixed parameters
     """
-    def __init__(self, model, params_free, params_fixed, 
-        beam = None, width = -1, dist = 140., line = None, iline = None, dv_mode = 'total',
+    def __init__(self, model, params_free, params_fixed,
+        beam = None, width = -1, dist = 140., dv_mode = 'total',
+        line = None, iline = None, ilinemode = 'index', database = 'lamda',
         build_args = None, sampling = False, n_subgrid = 1,
-        n_nest = None, zstrech = None, 
+        n_nest = None, zstrech = None,
         x_nestlim = None, y_nestlim = None, z_nestlim = None,
-        xscale = 0.5, yscale = 0.5, zscale = 0.5, 
+        xscale = 0.5, yscale = 0.5, zscale = 0.5,
         rin = 1., reslim = 10., cosi_lim = 0.5, f_nvbin = 0.33):
 
         # parameter checks
@@ -623,16 +616,18 @@ class DiMO(object):#, FitThinModel):
         self.xscale, self.yscale = xscale, yscale
         self.line = line
         self.iline = iline
+        self.ilinemode = ilinemode
+        self.database = database
         self.rin = rin
         self.reslim = reslim
         self.cosi_lim = cosi_lim
         self.f_nvbin = f_nvbin
 
 
-    def fit_cube(self, params: dict, pranges:list, 
+    def fit_cube(self, params: dict, pranges:list,
         d: np.ndarray, derr: float or np.ndarray, axes: list,
-        outname = 'modelfitter_results', nwalkers=None, 
-        nrun=2000, nburn=1000, labels=[], show_progress=True, 
+        outname = 'modelfitter_results', nwalkers=None,
+        nrun=2000, nburn=1000, labels=[], show_progress=True,
         optimize_ini=False, moves=emcee.moves.WalkMove(), symmetric_error=False,
         npool = 1, f_rand_init = 0.1):
         '''
@@ -660,13 +655,13 @@ class DiMO(object):#, FitThinModel):
             return 0
 
 
-    def fit_cube_ssdisk(self, 
-        params, pranges, 
-        d, derr, 
+    def fit_cube_ssdisk(self,
+        params, pranges,
+        d, derr,
         r, phi, x, y, v,
-        outname = 'fit_SSDisk', nwalkers=None, 
-        nrun=2000, nburn=1000, labels=[], show_progress=True, 
-        optimize_ini=False, moves = emcee.moves.StretchMove(), 
+        outname = 'fit_SSDisk', nwalkers=None,
+        nrun=2000, nburn=1000, labels=[], show_progress=True,
+        optimize_ini=False, moves = emcee.moves.StretchMove(),
         symmetric_error=False, npool = 1, f_rand_init = 1.,
         show_results = True):
 
@@ -699,7 +694,7 @@ class DiMO(object):#, FitThinModel):
             mdl = fmodel(*x, *params)
 
             # Likelihood function (in log)
-            exp = -0.5 * np.nansum((d-mdl)**2/(derr*derr) 
+            exp = -0.5 * np.nansum((d-mdl)**2/(derr*derr)
                 + np.log(2.*np.pi*derr*derr)) / Rbeam_pix
 
             if np.isnan(exp):
@@ -707,14 +702,12 @@ class DiMO(object):#, FitThinModel):
             else:
                 return exp
 
-
         # labels
         if len(labels) != len(params): labels = self.pfree_keys
 
-
         # setup model
         model = Builder_SSDisk(self.model,
-            axes_model, axes_sky, 
+            axes_model, axes_sky,
             xlim = None, ylim = None,
             nsub = self.n_nest, reslim = self.reslim,
             beam = self.beam, coordinate_type = 'polar')
@@ -924,8 +917,6 @@ class DiMO(object):#, FitThinModel):
 
         return modelcube
 
-
-
     def writeout_fitres(self, outname, criterion = None,
         credible_interval = 0.68):
         # best solution
@@ -975,16 +966,16 @@ class DiMO(object):#, FitThinModel):
                 for k in criterion.keys():
                     f.write('\n# %s %.4f'%(k, criterion[k]))
 
-
     # define fitting function
-    def fit_multilayer_model(self, params, pranges, 
+    def fit_multilayer_model(
+        self, params, pranges,
         d, derr, x, y, z, v,
-        Tcmb = 2.73, f0 = 230., dv_mode = 'total', 
-        pterm = False, outname = 'modelfitter_results', nwalkers=None, 
-        nrun=2000, nburn=1000, labels=[], show_progress=True, 
-        optimize_ini=False, moves = emcee.moves.StretchMove(), 
+        Tcmb = 2.73, f0 = 230., dv_mode = 'total',
+        pterm = False, builder = Builder, outname = 'modelfitter_results',
+        nwalkers=None, nrun=2000, nburn=1000, labels=[], show_progress=True,
+        optimize_ini=False, moves = emcee.moves.StretchMove(),
         symmetric_error=False, npool = 1, f_rand_init = 1.,
-        show_results = True):
+        show_results = True, restart = False):
         axes = [x, y, z, v]
         # drop unecessary axis
         d = np.squeeze(d)
@@ -1013,7 +1004,7 @@ class DiMO(object):#, FitThinModel):
             mdl = fmodel(*x, *params)
 
             # Likelihood function (in log)
-            exp = -0.5 * np.nansum((d-mdl)**2/(derr*derr) 
+            exp = -0.5 * np.nansum((d-mdl)**2/(derr*derr)
                 + np.log(2.*np.pi*derr*derr)) / Rbeam_pix
 
             if np.isnan(exp):
@@ -1052,7 +1043,7 @@ class DiMO(object):#, FitThinModel):
 
                 # cube on the original grid
                 modelcube = _model.build_cube(
-                    Tcmb = Tcmb, f0 = f0, dist = self.dist, 
+                    Tcmb = Tcmb, f0 = f0, dist = self.dist,
                     dv_mode = dv_mode, pterm = pterm)
                 modelcube = subgrid.binning_onsubgrid_layered(modelcube)
 
@@ -1085,7 +1076,7 @@ class DiMO(object):#, FitThinModel):
 
                 # cube on the original grid
                 modelcube = _model.build_cube(
-                    Tcmb = Tcmb, f0 = f0, dist = self.dist, 
+                    Tcmb = Tcmb, f0 = f0, dist = self.dist,
                     dv_mode = dv_mode, pterm = pterm)
 
                 return modelcube[:, smpl_y//2::smpl_y, smpl_x//2::smpl_x]
@@ -1096,12 +1087,13 @@ class DiMO(object):#, FitThinModel):
 
 
         # setup model
-        model = Builder(_x, _y, z, v, 
-            self.model, nsub = self.n_nest, zstrech = self.zstrech, 
-            reslim = self.reslim, beam = self.beam, 
+        model = builder(_x, _y, z, v,
+            self.model, nsub = self.n_nest, zstrech = self.zstrech,
+            reslim = self.reslim, beam = self.beam,
             width = self.width, f_nvbin = self.f_nvbin,
-            line = self.line, iline = self.iline, rin = self.rin,
-            adoptive_zaxis = True, cosi_lim = self.cosi_lim)
+            line = self.line, iline = self.iline, ilinemode = self.ilinemode,
+            database = self.database,
+            rin = self.rin, adoptive_zaxis = True, cosi_lim = self.cosi_lim)
         model.grid.gridinfo()
 
         # renew grid every fit or not
@@ -1120,7 +1112,6 @@ class DiMO(object):#, FitThinModel):
             dv_mode = dv_mode, pterm = pterm,
             outname = 'model_sideview_ini')
 
-
         # fitting
         p0 = list(self.params_free.values())
         BE = BayesEstimator(axes, d_smpld, derr, fitfunc, lnlike = lnlike)
@@ -1128,17 +1119,15 @@ class DiMO(object):#, FitThinModel):
             nwalkers = nwalkers, nrun = nrun, nburn = nburn, labels = labels,
             show_progress = show_progress, optimize_ini = optimize_ini, moves = moves,
             symmetric_error = symmetric_error, npool = npool, f_rand_init = f_rand_init,
-            show_results = show_results)
+            show_results = show_results, restart = restart)
         self.pfit = BE.pfit.copy()
         self.popt = BE.pfit[0]
         self.perr = BE.pfit[1:]
-
 
         # best solution
         smpl_y, smpl_x = 1, 1
         modelcube = fitfunc(_x, _y, z, v, *self.popt)
         self.modelcube = modelcube
-
         self.writeout_fitres(outname, BE.criterion)
 
         # make a side view
@@ -1155,12 +1144,10 @@ class DiMO(object):#, FitThinModel):
 
         return modelcube
 
-
 def merge_dictionaries(dict1, dict2):
     merged_dict = dict1.copy()
     merged_dict.update(dict2)
     return merged_dict
-
 
 def mathlabels(pylabels):
     labels = {
@@ -1173,12 +1160,18 @@ def mathlabels(pylabels):
     'qg': r'$q_\mathrm{g}$',
     'log_N_gc': r'$\log N_\mathrm{c,g}$',
     'log_tau_gc': r'$\log \tau_\mathrm{c,g}$',
+    'Mg': r'$M_\mathrm{g}$',
+    'log_Xmol': r'$\log~X_\mathrm{mol}$',
     'rc_g': r'$R_\mathrm{c,g}$',
     'gamma_g': r'$\gamma_\mathrm{g}$',
     'z0': r'$z_0$',
     'pz': r'$p_z$',
     'h0': r'$H_0$',
     'ph': r'$p_H$',
+    'z0l': r'$z_{\mathrm{l},0}$',
+    'z0u': r'$z_{\mathrm{u},0}$',
+    'pzl': r'$p_{z,\mathrm{l}}$',
+    'pzu': r'$p_{z,\mathrm{u}}$',
     'inc': r'$i$',
     'pa': r'$PA$',
     'ms': r'$M_\ast$',
@@ -1193,6 +1186,3 @@ def mathlabels(pylabels):
     keys = labels.keys()
 
     return [labels[i] if i in keys else i for i in pylabels]
-
-
-

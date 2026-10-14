@@ -8,6 +8,8 @@ import numpy as np
 import time
 from astropy import constants, units
 
+from .cdms import CDMS
+
 # constants (in cgs)
 
 Ggrav  = constants.G.cgs.value        # Gravitational constant
@@ -111,7 +113,21 @@ class MolData():
         self.dE = dE
 
 
-    def params_trans(self, iline):
+    def params_trans(self, iline, freq = False):
+        '''
+        Return parameters of a transition specified by iline.
+        iline is the index of the transition in the catalog 
+         if 'freq = False', or the frequency of the transition in GHz
+         if 'freq = True'.
+
+        Params
+        ------
+         iline (int): Index or frequency of the transition.
+         freq (bool): If true, iline will be treated as frequency.
+        '''
+        if freq:
+            iline = np.argmin((self.freq - iline)**2.) + 1 # get index
+
         # line Ju --> Jl
         Ju = self.Jup[iline-1]
         Jl = self.Jlow[iline-1]
@@ -126,7 +142,7 @@ class MolData():
         return trans, freq, Aul, gu, gl, Eu, El
 
 
-    def partition_grid(self, Tmin, Tmax, ngrid, scale = 'linear'):
+    def partition_grid(self, Tmin = 1., Tmax = 500., ngrid = 1024, scale = 'linear'):
         '''
         Make a grid for the partition function.
 
@@ -145,8 +161,8 @@ class MolData():
             print('ERROR\tPfunc_grid: Ignore the input and assume linear scale.')
             Tgrid = np.linspace(Tmin, Tmax, ngrid)
 
-        self._Tgrid = Tgrid
-        self._PFgrid = np.array([
+        self.Tgrid = Tgrid
+        self.Qgrid = np.array([
             np.sum(
             np.array([self.gJ[j]*np.exp(-self.EJ[j]/Tex) for j in range(len(self.J))])
             ) for Tex in Tgrid ])
@@ -161,14 +177,27 @@ class MolData():
 class Molecule():
 
 
-    def __init__(self, molecules):
+    def __init__(self, molecules, database = 'lamda'):
         self.moldata = {}
+        database = database.lower()
 
         if (type(molecules) == list) or (type(molecules) == tuple):
             for mol in molecules:
-                self.moldata[mol] = MolData(mol)
+                if database == 'lamda':
+                    self.moldata[mol] = MolData(mol)
+                elif database == 'cdms':
+                    self.moldata[mol] = CDMS(mol)
+                else:
+                    print('ERROR\tMolecule: database must be lamda or cdms.')
+                    return 0
         elif type(molecules) == str:
-            self.moldata[molecules] = MolData(molecules)
+            if database == 'lamda':
+                    self.moldata[molecules] = MolData(molecules)
+            elif database == 'cdms':
+                self.moldata[molecules] = CDMS(molecules)
+            else:
+                print('ERROR\tMolecule: database must be lamda or cdms.')
+                return 0
         else:
             print('ERROR\tLTEAnalysis: molecules must be str, or list or tuple of strings.')
 
@@ -191,21 +220,8 @@ class Molecule():
         trans, freq, Aul, gu, gl, Eu, El = self.moldata[line].params_trans(iline)
 
         # partition function
-        if grid_approx:
-            if type(Tex) == np.ndarray:
-                #start = time.time()
-                # Perform linear interpolation
-                Qrot = np.interp(Tex.ravel(),
-                    self.moldata[line]._Tgrid, self.moldata[line]._PFgrid)
-                Qrot = Qrot.reshape(Tex.shape)
-                #end = time.time()
-                #print('PF takes %13.2e s'%(end-start))
-            else:
-                # currently 0th order approx. only
-                Qrot = self.moldata[line]._PFgrid[np.nanargmin(
-                    (self.moldata[line]._Tgrid - Tex)**2.)]
-        else:
-            Qrot = self.moldata[line].partition_function(Tex)
+        mode = 'grid' if grid_approx else 'self-int'
+        Qrot = self.get_partition_function(line, Tex, mode = mode)
 
         # debug
         #print('Qrot,min Qrot,max: %13.3e %13.3e'%(np.nanmin(Qrot), np.nanmax(Qrot)))
@@ -221,6 +237,29 @@ class Molecule():
             #  or tau_v if Ntot is in unit of cm^-2 (cm s^-1)^-1
             return (clight*clight*clight)/(8.*np.pi*freq*freq*freq)*(gu/Qrot)\
             *np.exp(-Eu/Tex)*Ntot*Aul*(np.exp(hp*freq/(kb*Tex)) - 1.)
+
+
+    def get_partition_function(self, line, Tex, mode = 'grid'):
+        # partition function
+        if mode == 'grid':
+            if type(Tex) == np.ndarray:
+                #start = time.time()
+                # Perform linear interpolation
+                Qrot = np.interp(Tex.ravel(),
+                    self.moldata[line].Tgrid, self.moldata[line].Qgrid)
+                Qrot = Qrot.reshape(Tex.shape)
+                #end = time.time()
+                #print('PF takes %13.2e s'%(end-start))
+            else:
+                # currently 0th order approx. only
+                Qrot = self.moldata[line].Qgrid[np.nanargmin(
+                    (self.moldata[line].Tgrid - Tex)**2.)]
+            return Qrot
+        elif mode == 'self-int':
+            return self.moldata[line].partition_function(Tex)
+        else:
+            print('ERROR\tget_partition_function: mode must be grid or self-int.')
+            return 0
 
 
 def McDowell_partition_function(T, B0):
