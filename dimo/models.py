@@ -11,7 +11,7 @@ from scipy.optimize import root, minimize
 from scipy.signal import convolve
 from astropy import constants, units
 
-from .funcs import beam_convolution, gaussian2d, glnprof_conv
+from .funcs import beam_convolution, gaussian2d, glnprof_conv, rotate2d
 from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, Nested3DObsGrid, SubGrid2D
 from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
 from .molecule import Molecule
@@ -1234,9 +1234,9 @@ class TwoSlabDisk:
             R * auTOcm,
             self.ms * Msun,
             T,
-            self.rc_g * auTOcm,
-            self.gamma_g,
-            self.qg,
+            self.rc * auTOcm,
+            self.gamma,
+            self.q,
             z=z * auTOcm,
             pterm=pterm,
             mu=mu,
@@ -1317,8 +1317,8 @@ class TwoSlabDisk:
         # gas
         T = self.temperature(R)
         N_g = self.gas_density(R)
-        vlos = self.gas_velocity(R, phi, z, T_g, pterm=pterm, mu=mu)
-        dv = self.linewidth(R, dv_mode=dv_mode, Tg=T_g, mmol=mmol)
+        vlos = self.gas_velocity(R, phi, z, T, pterm=pterm, mu=mu)
+        dv = self.linewidth(R, dv_mode=dv_mode, Tg=T, mmol=mmol)
 
         # dust
         tau_d = self.dust_density(Rmid)
@@ -1783,9 +1783,6 @@ class SingleLayerDisk:
         Tcmb: float = 2.73,
         f0: float = 230.0,
     ):
-        # original grid
-        ny, nx = xx.shape
-
         # nested grid
         nstgrid = Nested2DGrid(
             x, y, nsub = nnest,
@@ -2057,7 +2054,7 @@ def vrot_ssdisk(
     if pterm:
         cs2 = kb * T / mu / mH
         vkep2 = vkep(r, ms, z=z) ** 2.0
-        vrot2 = vkep2 - cs2　* (
+        vrot2 = vkep2 - cs2 * (
             (2.0 - gamma) * (r / rc) ** (2.0 - gamma) + q + gamma)
         return np.sqrt(vrot2)
     else:
@@ -2093,6 +2090,97 @@ def Tdisk_D20(
     tanh = np.tanh((z - alpha * zq) / zq)
     T4 = Tmid**4.0 + 0.5 * (1.0 + tanh) * Tatm**4.0
     return T4**0.25
+
+
+# sky deprojection
+def sky_to_local(
+    x: np.ndarray,
+    y: np.ndarray,
+    inc: float,
+    pa: float,
+    fz, zargs, dfz = None,
+    inc_max = 85., zarg_lims = None, method = 'krylov'):
+    '''
+    Conversion from the plane-of-sky coordinate to the local coordinate.
+
+    Parameters
+    ----------
+    x, y : ndarray
+        Plane-of-sky coordinates.
+    inc : float
+        Inclination angle in radians.
+    pa : float
+        Position angle in radians.
+    method : {'krylov', 'anderson'}
+        Method
+    '''
+    _inc_max_rad = np.radians(inc_max)
+    cosi = np.cos(inc)
+    cosimax = np.cos(_inc_max_rad)
+    jac = True if dfz is not None else False
+    if (jac == True) & ((np.array(['hybr', 'lm']) != method).all()):
+        method = 'hybr'
+    # safety net
+    if zarg_lims is not None:
+        limit_check = np.array([
+            (zargs[i] >= zarg_lims[i][0]) & (zargs[i] < zarg_lims[i][1])
+            for i in range(len(zargs))])
+        if limit_check.all():
+            pass
+        else:
+            return 0
+
+    # root function
+    def y_solver(y, xp, yp, inc, fz, zargs, dfz = None):
+        if dfz is None:
+            return (y * np.cos(inc)
+                    + fz(np.sqrt(xp*xp + y*y), *zargs) * np.sin(inc) - yp
+                    )
+        else:
+            _jac = 1. / (np.cos(inc) + dfz(xp, y, *zargs) * np.sin(inc))
+            return (y * np.cos(inc)
+                    + fz(np.sqrt(xp*xp + y*y), *zargs)
+                    * np.sin(inc) - yp, np.diag(_jac)
+                    )
+
+    # rotation
+    if pa != 0.:
+        x, y = rotate2d(x, y, pa, coords=False, deg=False)
+
+    # check inclination limit
+    if inc < 0.:
+        return 0
+    if np.abs(cosi) < cosimax:
+        return 0
+
+    # deprojection limit
+    # only valid for power-law flaring case
+    z0, r0, hp = zargs
+    if z0 == 0.:
+        #sol = root(y_solver, y,
+        #    args=(x, y, inc, fz, zargs, dfz), method = method,)
+        #ydep = sol.x
+        ydep = y / np.cos(inc)
+    elif hp == 1.:
+        _r = 1.
+        _z = np.abs(fz(_r, *zargs))
+        th_lim = 0.5 * np.pi - np.arctan2(_z, _r) - inc
+        if th_lim <= 0.:
+            return 0
+        else:
+            sol = root(y_solver, y,
+                args=(x, y, inc, fz, zargs, dfz), method = method,)
+            ydep = sol.x
+    else:
+        sol = root(y_solver, y,
+                args=(x, y, inc, fz, zargs, dfz),
+                method = method, options={'maxiter': 20})
+        if sol.success:
+            ydep = sol.x
+        else:
+            return 0
+
+    return x, ydep
 
 
 # Planck function
