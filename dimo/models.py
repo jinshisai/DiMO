@@ -12,10 +12,9 @@ from scipy.signal import convolve
 from astropy import constants, units
 
 from .funcs import beam_convolution, gaussian2d, glnprof_conv, rotate2d
-from .grid import Nested3DGrid, Nested2DGrid, Nested1DGrid, Nested3DObsGrid, SubGrid2D
-from .libcube.linecube import solve_MLRT, Tndv_to_cube, Tt_to_cube
+from .grid import Nested3DGrid, Nested2DGrid, Nested3DObsGrid, SubGrid2D
 from .molecule import Molecule
-from .libcube import spectra, transfer, linecube
+from .libcube import spectra, transfer
 from .fastbuild import (
     fastbuild_twocompdisk,
     fastbuild_multilayer,
@@ -1629,7 +1628,7 @@ class SingleLayerDisk:
         # Convolve beam if given
         if beam is not None:
             I_cube = beam_convolution(
-                xx, yy, I_cube, [beam[0] * dist, beam[1] * dist, beam[2]]
+                xx, yy, I_cube, [beam[0], beam[1], beam[2]]
             )
 
         # return intensity
@@ -1637,12 +1636,13 @@ class SingleLayerDisk:
 
     def build_nested_cube(
         self,
-        xx: np.ndarray,
-        yy: np.ndarray,
+        x: np.ndarray,
+        y: np.ndarray,
         v: np.ndarray,
-        xscale: float,
-        yscale: float,
-        n_subgrid: int,
+        nnest: int,
+        xlim: float | None = None,
+        ylim: float | None = None,
+        reslim: float = 10.,
         beam: list[float] | None = None,
         dist: float = 140.0,
         Tcmb: float = 2.73,
@@ -1650,54 +1650,64 @@ class SingleLayerDisk:
         return_tau: bool = False,
     ):
         # original grid
-        ny, nx = xx.shape
+        nx = len(x)
+        ny = len(y)
+        dx = x[1] - x[0]
+        dy = y[1] - y[0]
+        nv = len(v)
+        dv = np.mean(v[1:] - v[:-1])
+        ve = np.hstack([v - dv * 0.5, v[-1] + 0.5 * dv])
 
         # nested grid
-        nstgrid = Nested2DGrid(xx, yy)
-        xlim = [-np.nanmax(xx) * xscale, np.nanmax(xx) * yscale]
-        ylim = [-np.nanmax(yy) * xscale, np.nanmax(yy) * yscale]
-        xx_sub, yy_sub = nstgrid.nest(xlim, ylim, n_subgrid)
-
-        # cube on the original grid
-        I_cube = self.build_cube(
-            xx, yy, v, beam=beam, dist=dist,
-            Tcmb=Tcmb, f0=f0, return_tau=return_tau
+        nstgrid = Nested2DGrid(
+            x, y, nsub = nnest,
+            xlim = xlim, ylim = ylim, reslim = reslim
         )
 
-        # cube on the nested grid
-        I_cube_sub = self.build_cube(
-            xx_sub,
-            yy_sub,
-            v,
-            beam=beam,
-            dist=dist,
-            Tcmb=Tcmb,
-            f0=f0,
-            return_tau=return_tau,
-        )
+        # get quantities
+        T, vlos, tau = self.build(nstgrid.xnest, nstgrid.ynest)
+        vlos += self.vsys
 
-        # cut off edge
-        if (beam is not None) & (return_tau == False):
-            xi, yi, xi0, yi0 = nstgrid.edgecut_indices(
-                beam[0] * dist * 1.5, beam[0] * dist * 1.5
-            )
-            I_cube_sub = I_cube_sub[:, yi:-yi, xi:-xi]
-            xi1, yi1 = nstgrid.nx - xi0, nstgrid.ny - yi0
-        else:
-            xi0, yi0 = nstgrid.xi0, nstgrid.yi0
-            xi1, yi1 = nstgrid.xi1, nstgrid.yi1
-        # replace
-        for i in range(len(v)):
-            I_cube[i, yi0:-yi0, xi0:-xi0] = nstgrid.binning_onsubgrid(
-                I_cube_sub[i, :, :]
+        # making a cube
+        _tau = np.zeros((nv, nstgrid.xnest.size,))
+        _Bv = lambda T, v: Bvppx(T, v, dx, dy, dist=dist, au=True)
+
+        # calculate tau_v
+        for i in range(nv):
+            _tau[i, :] = np.where(
+                (ve[i] <= vlos) & (vlos < ve[i + 1]),
+                tau,
+                0.0
+                )
+
+        # line width
+        if self.delv > 0.0:
+            _tau = glnprof_conv(_tau, v, self.delv)
+
+        if return_tau:
+            return nstgrid.high_dimensional_collapse(_tau)
+
+        # radiative transfer
+        _Bv_bg = np.tile(_Bv(Tcmb, f0), (nv, 1))
+        _Bv_T = np.tile(_Bv(T, f0), (nv, 1))
+        I_cube = (_Bv_T - _Bv_bg) * (1.0 - np.exp(-_tau))
+
+        # collapse
+        I_cube = nstgrid.high_dimensional_collapse(I_cube)
+
+        # Convolve beam if given
+        if beam is not None:
+            I_cube = beam_convolution(
+                nstgrid.xx, nstgrid.yy,
+                I_cube, [beam[0], beam[1], beam[2]]
             )
 
         return I_cube
 
     def build_cube_subgrid(
         self,
-        xx: np.ndarray,
-        yy: np.ndarray,
+        x: np.ndarray,
+        y: np.ndarray,
         v: np.ndarray,
         nsub: int = 2,
         beam: list[float] | None = None,
@@ -1708,11 +1718,10 @@ class SingleLayerDisk:
         if nsub < 1:
             print("ERROR\tbuild_cube_subgrid: nsub must be >= 2.")
             return 0
-        subgrid = SubGrid2D(xx, yy, nsub=nsub)
+        subgrid = SubGrid2D(x, y, nsub=nsub)
         _xx, _yy = subgrid.xx_sub, subgrid.yy_sub
         I_cube_sub = self.build_cube(_xx, _yy, v, beam, dist, Tcmb, f0)
-        nv = len(v)
-        ny, nx = xx.shape
+
         return subgrid.binning_onsubgrid_layered(I_cube_sub)
 
     def build_cont(
@@ -1738,15 +1747,15 @@ class SingleLayerDisk:
 
         # Convolve beam if given
         if beam is not None:
-            Iv = beam_convolution(xx, yy, Iv, [beam[0] * dist, beam[1] * dist, beam[2]])
+            Iv = beam_convolution(xx, yy, Iv, [beam[0], beam[1], beam[2]])
 
         # return intensity
         return Iv
 
     def build_cont_subgrid(
         self,
-        xx: np.ndarray,
-        yy: np.ndarray,
+        x: np.ndarray,
+        y: np.ndarray,
         beam: list[float] | None = None,
         dist: float = 140.0,
         Tcmb: float = 2.73,
@@ -1754,7 +1763,7 @@ class SingleLayerDisk:
         nsub: int = 2,
     ):
         # subgrid
-        subgrid = SubGrid2D(xx, yy, nsub=nsub)
+        subgrid = SubGrid2D(x, y, nsub=nsub)
         _xx, _yy = subgrid.xx_sub, subgrid.yy_sub
 
         # cube on the original grid
@@ -1783,11 +1792,13 @@ class SingleLayerDisk:
         Tcmb: float = 2.73,
         f0: float = 230.0,
     ):
+        dx = x[1] - x[0]
+        dy = y[1] - y[0]
+
         # nested grid
         nstgrid = Nested2DGrid(
             x, y, nsub = nnest,
             xlim = xlim, ylim = ylim, reslim = reslim)
-        nstgrid.nest()
         xnest = nstgrid.xnest
         ynest = nstgrid.ynest
 
@@ -1797,8 +1808,9 @@ class SingleLayerDisk:
         # radiative transfer
         _Bv = lambda T, v: Bvppx(
             T, v,
-            nstgrid.dxnest, nstgrid.dynest,
-            dist=dist, au=True)
+            dx, dy,
+            dist=dist, au=True
+        )  # in unit of Jy/original_pixel
         Iv = (_Bv(T, f0) - _Bv(Tcmb, f0)) * (1.0 - np.exp(-tau))
 
         # back to original grid
@@ -1808,7 +1820,8 @@ class SingleLayerDisk:
         if beam is not None:
             Iv = beam_convolution(
                 nstgrid.xx, nstgrid.yy,
-                Iv, [beam[0] * dist, beam[1] * dist, beam[2]])
+                Iv, [beam[0], beam[1], beam[2]]
+            )
 
         return Iv
 
