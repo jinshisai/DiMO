@@ -1,6 +1,6 @@
 # import model
 from ._dimo import DiMO
-from .models import SingleLayerDisk, TwoSlabDisk, \
+from .models import DiskModel, SingleLayerDisk, TwoSlabDisk, \
 MultiLayerDisk, SSDisk, TwoComponentDisk
 from .builder import Builder, Builder_SSDisk, Builder_TSD
 from . import models
@@ -11,5 +11,5 @@ from . import libcube
 #from . import export
 
 __all__ = ['DiMO', 'Builder', 'Builder_SSDisk', 'Builder_TSD',
-'MultiLayerDisk', 'SingleLayerDisk', 'TwoSlabDisk', 'SSDisk',
+'DiskModel', 'MultiLayerDisk', 'SingleLayerDisk', 'TwoSlabDisk', 'SSDisk',
 'TwoComponentDisk', 'models', 'mpe', 'grid', 'libcube',]
