@@ -38,6 +38,32 @@ auTOcm = units.au.to("cm")  # 1 au (cm)
 
 
 @dataclass(slots=True)
+class DiskModel:
+
+    @classmethod
+    def get_paramkeys(cls):
+        paramkeys = list(cls.get_annotations().keys())
+        paramkeys = [i for i in paramkeys if i[0] != "_"]
+        return paramkeys
+
+    @classmethod
+    def get_annotations(cls):
+        d = {}
+        for c in cls.mro():
+            try:
+                d.update(**c.__annotations__)
+            except AttributeError:
+                # object, at least, has no __annotations__ attribute.
+                pass
+        return d
+
+    def print_params(self):
+        fields = dataclasses.fields(self)
+        for v in fields:
+            print(f"{v.name}: ({v.type.__name__}) = {getattr(self, v.name)}")
+
+
+@dataclass(slots=True)
 class TwoComponentDisk:
     """
     Two-component disk model.
@@ -1326,7 +1352,7 @@ class TwoSlabDisk:
 
 
 @dataclass(slots=True)
-class SingleLayerDisk:
+class SingleLayerDisk(DiskModel):
     """
     Single-layer disk model.
     This model builds sky-plane images and cubes from a flared single layer.
@@ -1462,14 +1488,6 @@ class SingleLayerDisk:
         self.r0 = r0
         # line width
         self.delv = delv
-
-    def get_paramkeys(self):
-        return list(self.__annotations__.keys())
-
-    def print_params(self):
-        fields = dataclasses.fields(self)
-        for v in fields:
-            print(f"{v.name}: ({v.type.__name__}) = {getattr(self, v.name)}")
 
     def build(
         self,
