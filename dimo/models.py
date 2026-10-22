@@ -1354,8 +1354,7 @@ class TwoSlabDisk:
 @dataclass(slots=True)
 class SingleLayerDisk(DiskModel):
     """
-    Single-layer disk model.
-    This model builds sky-plane images and cubes from a flared single layer.
+    Single-layer thin disk model.
 
     Parameters
     ----------
@@ -1369,10 +1368,6 @@ class SingleLayerDisk(DiskModel):
         Characteristic radius in au.
     gamma : float
         Exponential taper index.
-    z0 : float
-        Disk height at ``r0`` in au.
-    hp : float
-        Power-law index of the disk height.
     inc : float
         Inclination angle in degrees.
     pa : float
@@ -1396,9 +1391,6 @@ class SingleLayerDisk(DiskModel):
     log_tau_c: float = 0.0
     rc: float = 100.0
     gamma: float = 1.0
-    # make it flared if you like
-    z0: float = 0.0
-    hp: float = 1.25
     # geometry
     inc: float = 0.0
     pa: float = 0.0
@@ -1413,6 +1405,9 @@ class SingleLayerDisk(DiskModel):
     # line width
     delv: float = 0.0
 
+    _inc_rad: float = np.radians(inc)
+    _pa_rad: float = np.radians(pa)
+
     def set_params(
         self,
         T0: float = 400.0,
@@ -1420,8 +1415,6 @@ class SingleLayerDisk(DiskModel):
         log_tau_c: float = 0.0,
         rc: float = 100.0,
         gamma: float = 1.0,
-        z0: float = 0.0,
-        hp: float = 1.25,
         inc: float = 0.0,
         pa: float = 0.0,
         ms: float = 1.0,
@@ -1446,10 +1439,6 @@ class SingleLayerDisk(DiskModel):
             Characteristic radius in au.
         gamma : float
             Exponential taper index.
-        z0 : float
-            Disk height at ``r0`` in au.
-        hp : float
-            Power-law index of the disk height.
         inc : float
             Inclination angle in degrees.
         pa : float
@@ -1472,9 +1461,6 @@ class SingleLayerDisk(DiskModel):
         self.log_tau_c = log_tau_c
         self.rc = rc
         self.gamma = gamma
-        # height
-        self.z0 = z0
-        self.hp = hp
         # geometry
         self.inc = inc
         self.pa = pa
@@ -1489,359 +1475,53 @@ class SingleLayerDisk(DiskModel):
         # line width
         self.delv = delv
 
+        self._inc_rad = np.radians(inc)
+        self._pa_rad = np.radians(pa)
+
     def build(
         self,
-        xx_sky: np.ndarray,
-        yy_sky: np.ndarray,
-        rin: float = 0.1):
+        R: np.ndarray,
+        phi: np.ndarray,
+        rin: float = 0.1,
+    ):
         """
         Build a model given sky coordinates
         and return a info for making a image cube.
+
+        Parameters
+        ----------
+        R : np.ndarray
+            Radius in au.
+        phi : np.ndarray
+            Azimuthal angle in radians.
+        rin : float
+            Inner most radius to calculate in au.
+        z : float or np.ndarray
+            Height of the layer in au.
         """
-        # parameters
-        _inc_rad = np.radians(self.inc)
-        _pa_rad = np.radians(self.pa)
-        _fz = lambda r, z0, r0, hp: z0 * (r / r0) ** hp
-        _dfz = lambda x, y, z0, r0, hp: (
-            2.0 * y * 0.5 / np.sqrt(x * x + y * y)
-            / r0 * z0 * hp * (np.sqrt(x * x + y * y) / r0)
-            * (hp - 1.0)
-        )
-
         # calculate temperature (T), velocity (v) and tau (t)
-        def get_Tvt(
-            xx_sky: np.ndarray,
-            yy_sky: np.ndarray,
-            _fz: Callable[..., np.ndarray],
-            zargs: list[float],
-            inc: float,
-            pa: float,
-            ms: float,
-            T0: float,
-            q: float,
-            r0: float,
-            tau_c: float,
-            rc: float,
-            gamma: float,
-            _dfz: Callable[..., np.ndarray] | None = None,
-        ):
-            # deprojection
-            depr = sky_to_local(
-                xx_sky,
-                yy_sky,
-                inc,
-                pa + 0.5 * np.pi,
-                _fz,
-                zargs,
-                _dfz,
-                zarg_lims=[[-0.3, 0.3], [0.1, 100.1], [0.0, 2.0]],
-            )
-            if type(depr) == int:
-                T = np.full(
-                    xx_sky.shape, 1.0
-                )  # 1 instead of zero to prevent numerical errors
-                vlos = np.zeros(xx_sky.shape)
-                tau = np.zeros(xx_sky.shape)
-                return T, vlos, tau
-            else:
-                xx, yy = depr
+        # temperature
+        T = self.T0 * (R / self.r0) ** (-self.q)
+        T[np.isnan(T)] = 1.0  # to prevent computational errors
 
-            # local coordinates
-            rr = np.sqrt(xx * xx + yy * yy)  # radius
-            phph = np.arctan2(yy, xx)  # azimuthal angle (rad)
-            zz = _fz(rr, *zargs)  # height
-            # prevent r=0
-            rr[rr == 0.0] = np.nan
+        # line of sight velocity
+        # take y-axis as the line of sight
+        vlos = (
+            vkep(R * auTOcm, self.ms * Msun, 0.)
+            * np.cos(phi)
+            * np.sin(self._inc_rad)
+            * 1.0e-5
+        )  # cm/s --> km/s
 
-            # quantities
-            # temperature
-            T = T0 * (rr / r0) ** (-q)
-            T[np.isnan(T)] = 1.0  # to prevent computational errors
-            T[T <= 1.0] = 1.0  # safety net
+        # tau
+        tau = ssdisk(R, 10**self.log_tau_c, self.rc, self.gamma, beta=None)
+        tau[np.isnan(tau)] = 0.0  # to prevent computational errors
 
-            # line of sight velocity
-            # take y-axis as the line of sight
-            vlos = (
-                vkep(rr * auTOcm, ms * Msun, zz * auTOcm)
-                * np.cos(phph)
-                * np.sin(_inc_rad)
-                * 1.0e-5
-            )  # cm/s --> km/s
-
-            # tau
-            tau = ssdisk(rr, tau_c, rc, gamma, beta=None)
-            tau[np.isnan(tau)] = 0.0  # to prevent computational errors
-            tau[tau < 0.0] = 0.0  # safety net
-
-            T[rr < rin] = 0.0
-            vlos[rr < rin] = 0.0
-            tau[rr < rin] = 0.0
-
-            return T, vlos, tau
-
-        # for a layer
-        T, vlos, tau = get_Tvt(
-            xx_sky - self.dx0,
-            yy_sky - self.dy0,
-            _fz,
-            [self.z0, self.r0, self.hp],
-            _inc_rad,
-            _pa_rad,
-            self.ms,
-            self.T0,
-            self.q,
-            self.r0,
-            10.0**self.log_tau_c,
-            self.rc,
-            self.gamma,
-        )
+        T[R < rin] = 1.0
+        vlos[R < rin] = 0.0
+        tau[R < rin] = 0.0
 
         return T, vlos, tau
-
-    def build_cube(
-        self,
-        xx: np.ndarray,
-        yy: np.ndarray,
-        v: np.ndarray,
-        beam: list[float] | None = None,
-        dist: float = 140.0,
-        Tcmb: float = 2.73,
-        f0: float = 230.0,
-        return_tau: bool = False,
-    ):
-        # get quantities
-        T, vlos, tau = self.build(xx, yy)
-        vlos += self.vsys
-
-        # velocity grid
-        ny, nx = xx.shape
-        dx = xx[0, 1] - xx[0, 0]
-        dy = yy[1, 0] - yy[0, 0]
-        nv = len(v)
-        dv = np.mean(v[1:] - v[:-1])
-        ve = np.hstack([v - dv * 0.5, v[-1] + 0.5 * dv])
-
-        # making a cube
-        _tau = np.zeros((nv, ny, nx))
-        _Bv = lambda T, v: Bvppx(T, v, dx, dy, dist=dist, au=True)
-        # calculate tau_v
-        for i in range(nv):
-            _tau[i, :, :] = np.where(
-                (ve[i] <= vlos) & (vlos < ve[i + 1]),
-                tau,
-                0.0
-                )
-        # line width
-        if self.delv > 0.0:
-            _tau = glnprof_conv(_tau, v, self.delv)
-
-        if return_tau:
-            return _tau
-
-        # radiative transfer
-        _Bv_bg = np.tile(_Bv(Tcmb, f0), (nv, 1, 1))
-        _Bv_T = np.tile(_Bv(T, f0), (nv, 1, 1))
-        I_cube = (_Bv_T - _Bv_bg) * (1.0 - np.exp(-_tau))
-
-        # Convolve beam if given
-        if beam is not None:
-            I_cube = beam_convolution(
-                xx, yy, I_cube, [beam[0], beam[1], beam[2]]
-            )
-
-        # return intensity
-        return I_cube
-
-    def build_nested_cube(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        v: np.ndarray,
-        nnest: int,
-        xlim: float | None = None,
-        ylim: float | None = None,
-        reslim: float = 10.,
-        beam: list[float] | None = None,
-        dist: float = 140.0,
-        Tcmb: float = 2.73,
-        f0: float = 230.0,
-        return_tau: bool = False,
-    ):
-        # original grid
-        nx = len(x)
-        ny = len(y)
-        dx = x[1] - x[0]
-        dy = y[1] - y[0]
-        nv = len(v)
-        dv = np.mean(v[1:] - v[:-1])
-        ve = np.hstack([v - dv * 0.5, v[-1] + 0.5 * dv])
-
-        # nested grid
-        nstgrid = Nested2DGrid(
-            x, y, nsub = nnest,
-            xlim = xlim, ylim = ylim, reslim = reslim
-        )
-
-        # get quantities
-        T, vlos, tau = self.build(nstgrid.xnest, nstgrid.ynest)
-        vlos += self.vsys
-
-        # making a cube
-        _tau = np.zeros((nv, nstgrid.xnest.size,))
-        _Bv = lambda T, v: Bvppx(T, v, dx, dy, dist=dist, au=True)
-
-        # calculate tau_v
-        for i in range(nv):
-            _tau[i, :] = np.where(
-                (ve[i] <= vlos) & (vlos < ve[i + 1]),
-                tau,
-                0.0
-                )
-
-        # line width
-        if self.delv > 0.0:
-            _tau = glnprof_conv(_tau, v, self.delv)
-
-        if return_tau:
-            return nstgrid.high_dimensional_collapse(_tau)
-
-        # radiative transfer
-        _Bv_bg = np.tile(_Bv(Tcmb, f0), (nv, 1))
-        _Bv_T = np.tile(_Bv(T, f0), (nv, 1))
-        I_cube = (_Bv_T - _Bv_bg) * (1.0 - np.exp(-_tau))
-
-        # collapse
-        I_cube = nstgrid.high_dimensional_collapse(I_cube)
-
-        # Convolve beam if given
-        if beam is not None:
-            I_cube = beam_convolution(
-                nstgrid.xx, nstgrid.yy,
-                I_cube, [beam[0], beam[1], beam[2]]
-            )
-
-        return I_cube
-
-    def build_cube_subgrid(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        v: np.ndarray,
-        nsub: int = 2,
-        beam: list[float] | None = None,
-        dist: float = 140.0,
-        Tcmb: float = 2.73,
-        f0: float = 230.0,
-    ):
-        if nsub < 1:
-            print("ERROR\tbuild_cube_subgrid: nsub must be >= 2.")
-            return 0
-        subgrid = SubGrid2D(x, y, nsub=nsub)
-        _xx, _yy = subgrid.xx_sub, subgrid.yy_sub
-        I_cube_sub = self.build_cube(_xx, _yy, v, beam, dist, Tcmb, f0)
-
-        return subgrid.binning_onsubgrid_layered(I_cube_sub)
-
-    def build_cont(
-        self,
-        xx: np.ndarray,
-        yy: np.ndarray,
-        beam: list[float] | None = None,
-        dist: float = 140.0,
-        Tcmb: float = 2.73,
-        f0: float = 230.0,
-    ):
-        # get quantities
-        T, _, tau = self.build(xx, yy)
-
-        # grid
-        ny, nx = xx.shape
-        dx = xx[0, 1] - xx[0, 0]
-        dy = yy[1, 0] - yy[0, 0]
-
-        # radiative transfer
-        _Bv = lambda T, v: Bvppx(T, v, dx, dy, dist=dist, au=True)
-        Iv = (_Bv(T, f0) - _Bv(Tcmb, f0)) * (1.0 - np.exp(-tau))
-
-        # Convolve beam if given
-        if beam is not None:
-            Iv = beam_convolution(xx, yy, Iv, [beam[0], beam[1], beam[2]])
-
-        # return intensity
-        return Iv
-
-    def build_cont_subgrid(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        beam: list[float] | None = None,
-        dist: float = 140.0,
-        Tcmb: float = 2.73,
-        f0: float = 230.0,
-        nsub: int = 2,
-    ):
-        # subgrid
-        subgrid = SubGrid2D(x, y, nsub=nsub)
-        _xx, _yy = subgrid.xx_sub, subgrid.yy_sub
-
-        # cube on the original grid
-        Iv = self.build_cont(
-            _xx,
-            _yy,
-            beam=beam,
-            dist=dist,
-            Tcmb=Tcmb,
-            f0=f0,
-        )
-
-        # return intensity
-        return subgrid.binning_onsubgrid_layered(Iv)
-
-    def build_nested_cont(
-        self,
-        x: np.ndarray,
-        y: np.ndarray,
-        nnest: int,
-        xlim: float | None = None,
-        ylim: float | None = None,
-        reslim: float = 10.,
-        beam: list[float] | None = None,
-        dist: float = 140.0,
-        Tcmb: float = 2.73,
-        f0: float = 230.0,
-    ):
-        dx = x[1] - x[0]
-        dy = y[1] - y[0]
-
-        # nested grid
-        nstgrid = Nested2DGrid(
-            x, y, nsub = nnest,
-            xlim = xlim, ylim = ylim, reslim = reslim)
-        xnest = nstgrid.xnest
-        ynest = nstgrid.ynest
-
-        # build model on the nested grid
-        T, _, tau = self.build(xnest, ynest)
-
-        # radiative transfer
-        _Bv = lambda T, v: Bvppx(
-            T, v,
-            dx, dy,
-            dist=dist, au=True
-        )  # in unit of Jy/original_pixel
-        Iv = (_Bv(T, f0) - _Bv(Tcmb, f0)) * (1.0 - np.exp(-tau))
-
-        # back to original grid
-        Iv = nstgrid.collapse(Iv)
-
-        # Convolve beam if given
-        if beam is not None:
-            Iv = beam_convolution(
-                nstgrid.xx, nstgrid.yy,
-                Iv, [beam[0], beam[1], beam[2]]
-            )
-
-        return Iv
 
 
 @dataclass(slots=True)

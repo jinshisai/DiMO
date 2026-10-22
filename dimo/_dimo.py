@@ -67,7 +67,8 @@ class DiMO(object):
     zstrech : list of float, optional
         Vertical stretch factors for 3D nested grids.
     x_nestlim, y_nestlim, z_nestlim : list, optional
-        Explicit nested-grid boundaries.
+        Explicit nested-grid boundaries. Use reslim if nested grid is updated
+        when model parameters change.
     xscale, yscale, zscale : float
         Scale factors for nested-grid boundaries.
     rin : float
@@ -973,6 +974,9 @@ class DiMO(object):
         derr: float | np.ndarray,
         x: np.ndarray,
         y: np.ndarray,
+        builder,
+        f0: float,
+        Tcmb: float = 2.73,
         outname: str = "modelfitter_results",
         nwalkers: int | None = None,
         nrun: int = 2000,
@@ -983,6 +987,7 @@ class DiMO(object):
         moves: emcee.moves.Move = emcee.moves.WalkMove(),
         symmetric_error: bool = False,
         npool: int = 1,
+        f_rand_init = 0.1,
     ):
         """Fit a single-layer model to a continuum image.
 
@@ -998,6 +1003,10 @@ class DiMO(object):
             Uncertainty of the observed image.
         x, y : np.ndarray
             Sky-plane coordinate axes in au.
+        builder : Builder
+            Builder.
+        f0 : float
+            Frequency in Hz.
         outname : str
             Prefix for fit output files.
         nwalkers, nrun, nburn : int, optional
@@ -1067,6 +1076,10 @@ class DiMO(object):
 
         # nested grid
         if self.n_subgrid > 1:
+            # subgrid
+            subgrid = SubGrid2D(x, y, nsub=self.n_subgrid)
+            _x, _y = subgrid.x_sub, subgrid.y_sub
+
             # fitting function
             def fitfunc(x, y, *params):
                 # safty net
@@ -1078,21 +1091,28 @@ class DiMO(object):
 
                 # merge free parameters to fixed parameters
                 params_free = dict(zip(self.pfree_keys, [*params]))
-                _params_full = merge_dictionaries(params_free, self.params_fixed)
-                params_full = list(
-                    {k: _params_full[k] for k in self.model_keys}.values()
-                )  # reordered elements
+                params_full = merge_dictionaries(params_free, self.params_fixed)
 
                 # build model cube
-                model = self.model(*params_full)
-                modelcont = model.build_cont_subgrid(
-                    x, y, nsub=self.n_subgrid, **self.build_args
+                _model = copy.deepcopy(model)
+                _model.set_model(params_full)
+
+                # renew grid
+                if renew_grid:
+                    _model.renest()
+                    _model.deproject_grid()
+
+                modelcont = _model.build_cont(
+                    f0, self.dist, Tcmb
                 )
+                modelcont = subgrid.binning_onsubgrid_layered(modelcont)
                 return modelcont[smpl_y // 2 :: smpl_y, smpl_x // 2 :: smpl_x]
         else:
+            _x = x
+            _y = y
 
             def fitfunc(x, y, *params):
-                # safty net
+                # safety net
                 if not np.all(
                     (pranges[0] < np.array([*params]))
                     * (np.array([*params]) < pranges[1])
@@ -1101,25 +1121,48 @@ class DiMO(object):
 
                 # merge free parameters to fixed parameters
                 params_free = dict(zip(self.pfree_keys, [*params]))
-                _params_full = merge_dictionaries(params_free, self.params_fixed)
-                params_full = list(
-                    {k: _params_full[k] for k in self.model_keys}.values()
-                )  # reordered elements
+                params_full = merge_dictionaries(params_free, self.params_fixed)
 
                 # build model cube
-                model = self.model(*params_full)
-                # cube on the original grid
-                modelim = model.build_nested_cont(
-                    x,
-                    y,
-                    nnest=self.n_nest,
-                    xlim=self.x_nestlim,
-                    ylim=self.y_nestlim,
-                    reslim=self.reslim,
-                    **self.build_args,
+                _model = copy.deepcopy(model)
+                _model.set_model(params_full)
+
+                # renew grid
+                if renew_grid:
+                    _model.renest()
+                    _model.deproject_grid()
+
+                modelim = _model.build_cont(
+                    f0, self.dist, Tcmb,
                 )
 
                 return modelim[::smpl_y, ::smpl_x]
+
+        # setup model
+        model = builder(
+            _x,
+            _y,
+            self.model,
+            nsub=self.n_nest,
+            xlim = self.x_nestlim,
+            ylim = self.y_nestlim,
+            reslim=self.reslim,
+            beam=self.beam,
+            rin=self.rin,
+        )
+        model.grid.gridinfo()
+
+        # renew grid every fit or not
+        if any([i in self.pfree_keys for i in ["dx0", "dy0", "inc", "pa"]]):
+            renew_grid = True
+        else:
+            print("Grid-saved mode")
+            renew_grid = False
+
+        # make grid
+        model.set_model(self._params_ini)
+        model.renest()
+        model.deproject_grid()
 
         # fitting
         p0 = list(self.params_free.values())
@@ -1137,7 +1180,7 @@ class DiMO(object):
             moves=moves,
             symmetric_error=symmetric_error,
             npool=npool,
-            f_rand_init=0.1,
+            f_rand_init=f_rand_init,
         )
         self.pfit = BE.pfit
         self.popt = BE.pfit[0]
@@ -1146,7 +1189,7 @@ class DiMO(object):
 
         # best solution
         smpl_y, smpl_x = 1, 1
-        modelim = fitfunc(x, y, *self.popt)
+        modelim = fitfunc(_x, _y, *self.popt)
         self.modelim = modelim
         return modelim
 

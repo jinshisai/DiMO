@@ -35,6 +35,521 @@ np.seterr(divide="ignore")
 
 
 # Builders
+class BuilderThinCont:
+    """
+    Build cont from a two-dimensional disk model.
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        Observer-plane coordinate axes in au.
+    model : Callable
+        Model class or factory.
+    xlim, ylim : list, optional
+        Limits of nested regions in au.
+    nsub : list, optional
+        Subdivision factor for each nested level.
+    reslim : float
+        Default nested-region half-width in pixels.
+    rin : float
+        Inner radius masked from gas calculations in au.
+    beam : list, optional
+        Beam as ``[major, minor, pa]`` in au, au, degrees.
+    """
+
+    def __init__(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        model: Callable,
+        xlim: list | None = None,
+        ylim: list | None = None,
+        nsub: list | None = None,
+        reslim: float = 10,
+        rin: float = 1.0,
+        beam: list | None = None,
+        ):
+        self._x, self._y = x, y
+        self.nx, self.ny = len(x), len(y)
+        self.grid = Nested2DGrid(
+            x, y, copy.deepcopy(xlim), copy.deepcopy(ylim), nsub, reslim
+        )
+        self.xs, self.ys = self.grid.xnest, self.grid.ynest
+        self.xps = self.yps = self.Rs = self.phs = self.Rmid = None
+        self.reslim, self.rin = reslim, rin
+        self.xlim = xlim
+        self.ylim = ylim
+
+        self.model = model()
+        self.beam = beam
+        if beam is not None:
+            self.define_beam(beam)
+
+    def define_beam(self, beam: Sequence[float]):
+        """Define a Gaussian beam using ``[major, minor, pa]`` in au and degrees."""
+        self.beam = beam
+        nx, ny = self.grid.nx, self.grid.ny
+        gaussbeam = gaussian2d(
+            self.grid.xx.copy(),
+            self.grid.yy.copy(),
+            1.0,
+            self.grid.xx[ny // 2 - 1 + ny % 2, nx // 2 - 1 + nx % 2],
+            self.grid.yy[ny // 2 - 1 + ny % 2, nx // 2 - 1 + nx % 2],
+            beam[1] / 2.35482,
+            beam[0] / 2.35482,
+            beam[2],
+            peak=True,
+        )
+        self.gaussbeam = gaussbeam / np.sum(gaussbeam)
+
+    def renest(self):
+        """Rebuild the nested grid around the current model offsets."""
+        if self.grid.nlevels > 1:
+            self.grid.get_nestinglim(self.reslim, dx0=self.dx0, dy0=self.dy0)
+            self.grid.nest()
+        self.xs, self.ys = self.grid.xnest, self.grid.ynest
+        self.xps = self.yps = self.Rs = self.phs = self.Rmid = None
+
+    def deproject_grid(self):
+        """Map the sky grid to the disk plane using the current geometry."""
+        xp, yp = rot2d(
+            self.xs - self.dx0,
+            self.ys - self.dy0,
+            self._pa_rad - 0.5 * np.pi,
+        )
+        cosi = np.cos(self._inc_rad)
+        if np.isclose(cosi, 0.0):
+            raise ValueError("A two-dimensional disk cannot be viewed edge-on.")
+        self.xps, self.yps = xp, yp / cosi
+        self.Rs = np.hypot(self.xps, self.yps)
+        self.Rs[self.Rs < self.rin] = np.nan
+        self.phs = np.arctan2(self.yps, self.xps)
+
+    def set_model(self, params: Mapping[str, float]):
+        """Set the model parameters, including ``dx0``, ``dy0``, ``inc``, ``pa``."""
+        self.model.set_params(**params)
+        self.dx0, self.dy0 = params["dx0"], params["dy0"]
+        self.inc, self.pa = params["inc"], params["pa"]
+        if self.inc < 0.0 or self.inc > 180.0:
+            print("ERROR\tset_model: inc must be 0 < i < 180.")
+            return 0
+        self._inc_rad = np.radians(self.inc)
+        self._pa_rad = np.radians(self.pa)
+        self.side = 1
+
+    def build_model(self):
+        """Build the gas and dust fields on the deprojected 2D grid."""
+        return self.model.build(
+            self.Rs,
+            self.phs,
+            self.rin,
+        )
+
+    def build_cont(
+        self,
+        freq: float,
+        dist: float,
+        Tcmb: float = 2.73,
+        return_Ttau: bool = False,
+    ):
+        """Build a continuum image at ``freq`` Hz.
+
+        Parameters
+        ----------
+        freq : float
+            Observing frequency in Hz.
+        Tcmb : float
+            Background temperature in K.
+        dist : float
+            Source distance in pc.
+        return_Ttau : bool
+            Return temperature and optical depth instead of intensity.
+
+        Returns
+        -------
+        np.ndarray or tuple of np.ndarray
+            Image of shape ``(y, x)`` or a pair of temperature and optical
+            depth images with the same shape.
+        """
+        T, _, tau = self.build_model()
+        tau = np.nan_to_num(tau, nan=0.0)
+        if return_Ttau:
+            return self.grid.collapse(T), self.grid.collapse(tau)
+
+        B_bg = Bvppx(Tcmb, freq, self.grid.dx, self.grid.dy, dist=dist, au=True)
+        B_d = Bvppx(T, freq, self.grid.dx, self.grid.dy, dist=dist, au=True)
+        intensity = (B_d - B_bg) * (1.0 - np.exp(-tau))
+        image = self.grid.collapse(intensity)
+        if self.beam is not None:
+            image = beam_convolution(
+                self.grid.xx.copy(),
+                self.grid.yy.copy(),
+                image,
+                self.beam,
+                self.gaussbeam,
+            )
+        return image
+
+
+class Builder2D:
+    """Build line cubes and continuum images from a two-dimensional disk model.
+
+    The model must implement ``set_params(**params)`` and
+    ``build(R, phi, Rmid=..., dv_mode=..., mmol=..., pterm=...)``. Its
+    ``build`` method returns gas temperature, gas column density, line-of-sight
+    velocity, line width, and dust optical depth, in that order. This is the
+    interface provided by :class:`dimo.models.TwoSlabDisk`.
+
+    Parameters
+    ----------
+    x, y : np.ndarray
+        Observer-plane coordinate axes in au.
+    v : np.ndarray
+        Velocity axis in km/s.
+    model : Callable
+        Model class or factory.
+    xlim, ylim : list, optional
+        Limits of nested regions in au.
+    nsub : list, optional
+        Subdivision factor for each nested level.
+    reslim : float
+        Default nested-region half-width in pixels.
+    rin : float
+        Inner radius masked from gas calculations in au.
+    beam : list, optional
+        Beam as ``[major, minor, pa]`` in au, au, degrees.
+    width : float
+        Spectral smoothing FWHM in km/s; a negative value disables smoothing.
+    f_nvbin : float
+        Velocity sub-binning factor relative to ``width``.
+    line : str, optional
+        Molecular line identifier.
+    iline : int, optional
+        Transition index or frequency, depending on ``ilinemode``.
+    ilinemode, database : str
+        Transition selection mode and molecular database.
+    Tmin, Tmax : float
+        Temperature range for the partition-function grid.
+    nTex : int
+        Number of temperature samples for the partition-function grid.
+    """
+
+    def __init__(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        v: np.ndarray,
+        model: Callable,
+        xlim: list | None = None,
+        ylim: list | None = None,
+        nsub: list | None = None,
+        reslim: float = 10,
+        rin: float = 1.0,
+        beam: list | None = None,
+        width: float = -1,
+        f_nvbin: float = 0.33,
+        line: str | None = None,
+        iline: int | None = None,
+        ilinemode: str = "index",
+        database: str = "lamda",
+        Tmin: float = 1.0,
+        Tmax: float = 500.0,
+        nTex: int = 1024,
+    ):
+        self._x, self._y, self._v = x, y, v
+        self.nx, self.ny = len(x), len(y)
+        self.grid = Nested2DGrid(
+            x, y, copy.deepcopy(xlim), copy.deepcopy(ylim), nsub, reslim
+        )
+        self.xs, self.ys = self.grid.xnest, self.grid.ynest
+        self.xps = self.yps = self.Rs = self.phs = self.Rmid = None
+        self.reslim, self.rin = reslim, rin
+
+        if width > 0.0:
+            delv = np.mean(v[1:] - v[:-1])
+            nvbin = max(1, int(delv // (width * f_nvbin)))
+        else:
+            nvbin = 1
+        self.width = width
+        self.sigma = width / 2.35482
+        self.nvbin = nvbin
+        self.vaxis = SubGrid1D(v, nvbin)
+        self.nv = self.vaxis.nx_sub
+        self.delv = self.vaxis.dx_sub
+        self.ve = self.vaxis.xe_sub
+        self.v = self.vaxis.x_sub
+        if width > 0.0:
+            self.define_window(width)
+
+        self.model = model()
+        self.line, self.iline = line, iline
+        self.ilinemode, self.database = ilinemode, database
+        if line is not None and iline is not None:
+            self.mol = Molecule(line, database=database)
+            if database.lower() == "lamda":
+                self.mol.moldata[line].partition_grid(Tmin=Tmin, Tmax=Tmax, ngrid=nTex)
+            else:
+                self.mol.moldata[line].partition_grid()
+            self.mmol = self.mol.moldata[line].weight
+            self.Qgrid = (
+                self.mol.moldata[line].Tgrid,
+                self.mol.moldata[line].Qgrid,
+            )
+            use_freq = ilinemode in ("freq", "frequency")
+            (
+                self.trans,
+                self.freq,
+                self.Aul,
+                self.gu,
+                self.gl,
+                self.Eu,
+                self.El,
+            ) = self.mol.moldata[line].params_trans(iline, freq=use_freq)
+            self.f = doppler_v2f(self.v * 1.0e5, self.freq)
+            print("Transition, freq: %s, %.6f GHz" % (self.trans, self.freq * 1.0e-9))
+
+        self.beam = beam
+        if beam is not None:
+            self.define_beam(beam)
+
+    def define_beam(self, beam: Sequence[float]):
+        """Define a Gaussian beam using ``[major, minor, pa]`` in au and degrees."""
+        self.beam = beam
+        nx, ny = self.grid.nx, self.grid.ny
+        gaussbeam = gaussian2d(
+            self.grid.xx.copy(),
+            self.grid.yy.copy(),
+            1.0,
+            self.grid.xx[ny // 2 - 1 + ny % 2, nx // 2 - 1 + nx % 2],
+            self.grid.yy[ny // 2 - 1 + ny % 2, nx // 2 - 1 + nx % 2],
+            beam[1] / 2.35482,
+            beam[0] / 2.35482,
+            beam[2],
+            peak=True,
+        )
+        self.gaussbeam = gaussbeam / np.sum(gaussbeam)
+
+    def define_window(self, width: float):
+        """Define the spectral smoothing window; ``width`` is FWHM in km/s."""
+        gausswindow = gauss1d(
+            self.v, 1.0, self.v[self.nv // 2 - 1 + self.nv % 2], width / 2.35482
+        )
+        self.gausswindow = (gausswindow / np.sum(gausswindow)).reshape((self.nv, 1, 1))
+
+    def getQrot(self, Ts: np.ndarray):
+        """Interpolate the rotational partition function at temperature ``Ts``."""
+        return np.interp(Ts, self.Qgrid[0], self.Qgrid[1])
+
+    def renest(self):
+        """Rebuild the nested grid around the current model offsets."""
+        if self.grid.nlevels > 1:
+            self.grid.get_nestinglim(self.reslim, dx0=self.dx0, dy0=self.dy0)
+            self.grid.nest()
+        self.xs, self.ys = self.grid.xnest, self.grid.ynest
+        self.xps = self.yps = self.Rs = self.phs = self.Rmid = None
+
+    def deproject_grid(self):
+        """Map the sky grid to the disk plane using the current geometry."""
+        xp, yp = rot2d(
+            self.xs - self.dx0,
+            self.ys - self.dy0,
+            self._pa_rad - 0.5 * np.pi,
+        )
+        cosi = np.cos(self._inc_rad)
+        if np.isclose(cosi, 0.0):
+            raise ValueError("A two-dimensional disk cannot be viewed edge-on.")
+        self.xps, self.yps = xp, yp / cosi
+        self.Rs = np.hypot(self.xps, self.yps)
+        self.Rs[self.Rs < self.rin] = np.nan
+        self.phs = np.arctan2(self.yps, self.xps)
+
+    def set_model(self, params: Mapping[str, float]):
+        """Set the model parameters, including ``dx0``, ``dy0``, ``inc``, ``pa``."""
+        self.model.set_params(**params)
+        self.dx0, self.dy0 = params["dx0"], params["dy0"]
+        self.inc, self.pa = params["inc"], params["pa"]
+        if self.inc < 0.0 or self.inc > 180.0:
+            print("ERROR\tset_model: inc must be 0 < i < 180.")
+            return 0
+        self._inc_rad = np.radians(self.inc)
+        self._pa_rad = np.radians(self.pa)
+        self.side = 1
+
+    def build_model(self, build_args: dict = {}):
+        """Build the gas and dust fields on the deprojected 2D grid."""
+        return self.model.build(
+            self.Rs,
+            self.phs,
+            **build_args,
+        )
+
+    def build_cube(
+        self,
+        Tcmb: float = 2.73,
+        f0: float | None = None,
+        dist: float = 140.0,
+        dv_mode: str = "total",
+        pterm: bool = True,
+        contsub: bool = True,
+        return_Ttau: bool = False,
+    ):
+        """Build a line cube with shape ``(velocity, y, x)``.
+
+        Parameters
+        ----------
+        Tcmb : float
+            Background temperature in K.
+        f0 : float, optional
+            Retained for compatibility with :class:`Builder`; the selected
+            molecular transition determines the frequency.
+        dist : float
+            Source distance in pc.
+        dv_mode : str
+            Line-width mode passed to the model.
+        pterm : bool
+            Whether the model includes the pressure-gradient term.
+        contsub : bool
+            Whether to subtract continuum emission.
+        return_Ttau : bool
+            Return temperature and optical-depth components instead of flux.
+
+        Returns
+        -------
+        np.ndarray
+            Cube of shape ``(velocity, y, x)``. With ``return_Ttau``, the
+            leading axis contains front temperature, front optical depth,
+            zero rear temperature, and zero rear optical depth.
+        """
+        if self.line is None or self.iline is None:
+            raise ValueError("build_cube requires both line and iline.")
+        T_g, N_g, vlos, dv, tau_d = self.build_model(dv_mode, pterm)
+        T_g = np.asarray(T_g)
+        N_g = np.nan_to_num(N_g, nan=0.0)
+        tau_d = np.nan_to_num(tau_d, nan=0.0)
+        vlos = np.asarray(vlos)
+        dv = np.broadcast_to(dv, T_g.shape)
+
+        tau_int = transfer.NT_to_tau(
+            N_g,
+            T_g,
+            self.freq,
+            self.Aul,
+            self.Eu,
+            self.gu,
+            self.getQrot(T_g),
+            1.0e5,
+        )
+        delta = self.v[np.newaxis, :] - vlos[:, np.newaxis]
+        profile = np.zeros_like(delta)
+        broad = dv > 0.0
+        if np.any(broad):
+            profile[broad] = np.exp(-((delta[broad] / dv[broad, np.newaxis]) ** 2)) / (
+                np.sqrt(np.pi) * dv[broad, np.newaxis]
+            )
+        if np.any(~broad):
+            profile[~broad] = (
+                (vlos[~broad, np.newaxis] >= self.ve[:-1])
+                & (vlos[~broad, np.newaxis] < self.ve[1:])
+            ) / abs(self.delv)
+        tau_v = tau_int[:, np.newaxis] * profile
+
+        if return_Ttau:
+            T_front = np.broadcast_to(T_g, (self.nv, T_g.size)).copy()
+            return np.array(
+                [
+                    self.grid.high_dimensional_collapse(T_front),
+                    self.grid.high_dimensional_collapse(tau_v.T),
+                    np.zeros((self.nv, self.ny, self.nx)),
+                    np.zeros((self.nv, self.ny, self.nx)),
+                ]
+            )
+
+        freq = doppler_v2f((self.v - self.model.vsys) * 1.0e5, self.freq)
+        B_bg = Bvppx(Tcmb, freq, self.grid.dx, self.grid.dy, dist=dist, au=True)
+        B_g = Bvppx(
+            T_g[:, np.newaxis],
+            freq[np.newaxis, :],
+            self.grid.dx,
+            self.grid.dy,
+            dist=dist,
+            au=True,
+        )
+        intensity = solveRT_TL(
+            B_g,
+            0.0,
+            B_g,
+            B_bg,
+            tau_v,
+            0.0,
+            tau_d[:, np.newaxis],
+            contsub=contsub,
+        )
+        cube = self.grid.high_dimensional_collapse(intensity.T)
+
+        if self.width > 0.0:
+            cube = convolve(cube, self.gausswindow, mode="same")
+            if self.nvbin > 1:
+                cube = np.nanmean(
+                    np.array([cube[i :: self.nvbin] for i in range(self.nvbin)]),
+                    axis=0,
+                )
+        if self.beam is not None:
+            cube = beam_convolution(
+                self.grid.xx.copy(),
+                self.grid.yy.copy(),
+                cube,
+                self.beam,
+                self.gaussbeam,
+            )
+        return cube
+
+    def build_cont(
+        self,
+        freq: float,
+        Tcmb: float = 2.73,
+        dist: float = 140.0,
+        return_Ttau: bool = False,
+    ):
+        """Build a continuum image at ``freq`` Hz.
+
+        Parameters
+        ----------
+        freq : float
+            Observing frequency in Hz.
+        Tcmb : float
+            Background temperature in K.
+        dist : float
+            Source distance in pc.
+        return_Ttau : bool
+            Return temperature and optical depth instead of intensity.
+
+        Returns
+        -------
+        np.ndarray or tuple of np.ndarray
+            Image of shape ``(y, x)`` or a pair of temperature and optical
+            depth images with the same shape.
+        """
+        T_g, _, _, _, tau_d = self.build_model(dv_mode="total", pterm=False)
+        T_g = np.asarray(T_g)
+        tau_d = np.nan_to_num(tau_d, nan=0.0)
+        if return_Ttau:
+            return self.grid.collapse(T_g), self.grid.collapse(tau_d)
+
+        B_bg = Bvppx(Tcmb, freq, self.grid.dx, self.grid.dy, dist=dist, au=True)
+        B_d = Bvppx(T_g, freq, self.grid.dx, self.grid.dy, dist=dist, au=True)
+        intensity = (B_d - B_bg) * (1.0 - np.exp(-tau_d))
+        image = self.grid.collapse(intensity)
+        if self.beam is not None:
+            image = beam_convolution(
+                self.grid.xx.copy(),
+                self.grid.yy.copy(),
+                image,
+                self.beam,
+                self.gaussbeam,
+            )
+        return image
+
+
 class Builder(object):
     """
     Standard 3D model builder.
