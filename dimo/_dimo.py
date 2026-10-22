@@ -193,6 +193,8 @@ class DiMO(object):
         symmetric_error: bool = False,
         npool: int = 1,
         f_rand_init: float = 0.1,
+        show_results: bool = True,
+        restart: bool = False,
     ):
         """Dispatch a cube fit according to the number of coordinate axes.
 
@@ -268,6 +270,8 @@ class DiMO(object):
                 symmetric_error=symmetric_error,
                 npool=npool,
                 f_rand_init=f_rand_init,
+                show_results = show_results,
+                restart = restart,
             )
         else:
             print("ERROR\tfit_cube: axes must consist of three or four axes.")
