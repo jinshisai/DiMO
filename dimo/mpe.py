@@ -106,7 +106,7 @@ class BayesEstimator():
     # Run mcmc
     def run_mcmc(self, pini, pranges, outname=None,
         nwalkers=None, nrun=5000, nburn=500, labels=[], show_progress=True,
-        f_rand_init=0.1, credible_interval=0.68, show_results=True,
+        f_rand_init=0.1, credible_interval=0.683, show_results=True,
         optimize_ini=True, moves=emcee.moves.StretchMove(), symmetric_error=False,
         npool=1, errtype='gauss', savefig = True, savesampler = True, restart = False):
         '''
